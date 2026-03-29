@@ -2,7 +2,6 @@ import { ReactNode } from "react";
 import { redirect } from "next/navigation";
 
 import { getAuthContext } from "@/lib/auth/server-context";
-import { requiresTenantSelection } from "@/lib/auth/guards";
 import { getDisplayName } from "@/lib/auth/user";
 import { ProtectedSidebar } from "@/components/shell/protected-sidebar";
 import { ProtectedTopbar } from "@/components/shell/protected-topbar";
@@ -21,7 +20,15 @@ export default async function ProtectedLayout({ children }: Props) {
     redirect("/login");
   }
 
-  if (requiresTenantSelection(ctx)) {
+  if (!ctx.session?.active_tenant_id) {
+    redirect("/select-tenant");
+  }
+
+  const hasActiveMembership = (ctx.memberships ?? []).some(
+    (membership) => membership.tenant_id === ctx.session?.active_tenant_id,
+  );
+
+  if (!hasActiveMembership) {
     redirect("/select-tenant");
   }
 
