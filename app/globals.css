@@ -1,26 +1,158 @@
 @import "tailwindcss";
 
+/* =========================
+   PROCEIT DESIGN TOKENS
+========================= */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* CORE BACKGROUND SYSTEM */
+  --bg-base: #020617;
+  --bg-layer-1: #030712;
+  --bg-layer-2: #050816;
+  --bg-elevated: rgba(255, 255, 255, 0.04);
+
+  /* TEXT */
+  --text-primary: rgba(255, 255, 255, 0.92);
+  --text-secondary: rgba(255, 255, 255, 0.65);
+  --text-muted: rgba(255, 255, 255, 0.45);
+
+  /* BORDER */
+  --border-soft: rgba(255, 255, 255, 0.08);
+  --border-medium: rgba(255, 255, 255, 0.12);
+
+  /* ACCENT (PROCEIT SIGNATURE) */
+  --nav-accent: 199 89% 48%; /* usado como hsl(var(--nav-accent)) */
+
+  /* STATUS */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+
+  /* RADIUS */
+  --radius-xl: 28px;
+  --radius-2xl: 32px;
+
+  /* SHADOW SYSTEM */
+  --shadow-glass: 0 30px 90px rgba(0, 0, 0, 0.55);
+  --shadow-soft: 0 20px 60px rgba(0, 0, 0, 0.35);
+
+  /* BLUR */
+  --blur-glass: blur(24px);
+
+  /* FONTS */
+  --font-sans: var(--font-geist-sans, ui-sans-serif, system-ui);
+  --font-mono: var(--font-geist-mono, monospace);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+/* =========================
+   BASE
+========================= */
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* =========================
+   GLOBAL BACKGROUND SYSTEM
+========================= */
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+
+  background:
+    radial-gradient(circle at top, rgba(14,165,233,0.12), transparent 28%),
+    radial-gradient(circle at 80% 20%, rgba(59,130,246,0.08), transparent 22%),
+    radial-gradient(circle at 20% 80%, rgba(14,165,233,0.06), transparent 20%),
+    linear-gradient(180deg, #020617 0%, #030712 45%, #020617 100%);
+}
+
+/* GRID subtle overlay */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+
+  background:
+    linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
+
+  background-size: 72px 72px;
+  opacity: 0.08;
+}
+
+/* =========================
+   SCROLLBAR
+========================= */
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* =========================
+   SELECTION
+========================= */
+
+::selection {
+  background: rgba(14,165,233,0.25);
+  color: white;
+}
+
+/* =========================
+   UTILITIES (BASE PROCEIT)
+========================= */
+
+/* Glass card base */
+.proceit-glass {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  backdrop-filter: var(--blur-glass);
+  box-shadow: var(--shadow-glass);
+}
+
+/* Accent line */
+.proceit-accent-line {
+  height: 2px;
+  width: 100%;
+  background: linear-gradient(
+    to right,
+    transparent,
+    hsl(var(--nav-accent)),
+    transparent
+  );
+}
+
+/* Soft card */
+.proceit-soft-card {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-soft);
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: var(--shadow-soft);
 }
