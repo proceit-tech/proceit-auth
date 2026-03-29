@@ -1,7 +1,7 @@
 import { ReactNode } from "react";
 import { redirect } from "next/navigation";
 
-import { getAuthContext } from "@/lib/auth/server-context";
+import { getRuntimeContext } from "@/lib/auth/runtime-context";
 import ProtectedSidebar from "@/components/shell/protected-sidebar";
 import ProtectedTopbar from "@/components/shell/protected-topbar";
 
@@ -13,21 +13,13 @@ type Props = {
 
 export default async function ProtectedLayout({ children }: Props) {
   const lang: Lang = "es";
-  const ctx = await getAuthContext();
+  const ctx = await getRuntimeContext();
 
-  if (!ctx?.ok) {
+  if (!ctx.authenticated) {
     redirect("/login");
   }
 
-  if (!ctx.session?.active_tenant_id) {
-    redirect("/select-tenant");
-  }
-
-  const hasActiveMembership = (ctx.memberships ?? []).some(
-    (membership) => membership.tenant_id === ctx.session?.active_tenant_id,
-  );
-
-  if (!hasActiveMembership) {
+  if (ctx.requiresTenantSelection || !ctx.hasTenantScope || !ctx.activeTenant) {
     redirect("/select-tenant");
   }
 
@@ -38,7 +30,7 @@ export default async function ProtectedLayout({ children }: Props) {
       <div className="absolute left-0 top-0 h-[2px] w-full bg-gradient-to-r from-transparent via-[hsl(var(--nav-accent))] to-transparent opacity-90" />
 
       <div className="relative flex min-h-screen">
-        <ProtectedSidebar lang={lang} items={[]} />
+        <ProtectedSidebar lang={lang} items={ctx.navigation} />
 
         <div className="flex min-h-screen min-w-0 flex-1 flex-col">
           <ProtectedTopbar lang={lang} ctx={ctx} />
