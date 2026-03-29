@@ -3,8 +3,8 @@ import { redirect } from "next/navigation";
 
 import { getAuthContext } from "@/lib/auth/server-context";
 import { getDisplayName } from "@/lib/auth/user";
-import { ProtectedSidebar } from "@/components/shell/protected-sidebar";
-import { ProtectedTopbar } from "@/components/shell/protected-topbar";
+import ProtectedSidebar from "@/components/shell/protected-sidebar";
+import ProtectedTopbar from "@/components/shell/protected-topbar";
 
 type Lang = "es" | "pt";
 
@@ -59,10 +59,7 @@ export default async function ProtectedLayout({ children }: Props) {
             <div className="mx-auto w-full max-w-[1680px] px-4 py-6 sm:px-6 sm:py-8">
               <div className="min-w-0 rounded-[32px] border border-white/10 bg-white/[0.03] p-2 shadow-[0_30px_90px_rgba(0,0,0,0.35)] backdrop-blur-sm">
                 <div className="h-[2px] w-full rounded-full bg-gradient-to-r from-transparent via-[hsl(var(--nav-accent))] to-transparent" />
-
-                <div className="min-w-0 p-2 sm:p-3 md:p-4">
-                  {children}
-                </div>
+                <div className="min-w-0 p-2 sm:p-3 md:p-4">{children}</div>
               </div>
             </div>
           </main>
