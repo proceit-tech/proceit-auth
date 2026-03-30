@@ -5,6 +5,10 @@ const cookieSameSiteSchema = z.enum(["lax", "strict", "none"]);
 
 const POSTGRES_URL_PREFIXES = ["postgres://", "postgresql://"] as const;
 
+/* =========================
+   HELPERS
+========================= */
+
 const positiveIntegerFromString = (fieldName: string) =>
   z.string().transform((value, ctx) => {
     const parsed = Number(value);
@@ -65,9 +69,13 @@ const optionalNormalizedString = z
   .string()
   .transform((value) => {
     const normalized = value.trim();
-    return normalized.length > 0 ? normalized : undefined;
+    return normalized.length > 0 ? undefined : undefined;
   })
   .optional();
+
+/* =========================
+   DATABASE
+========================= */
 
 const databaseUrlSchema = z
   .string()
@@ -78,76 +86,70 @@ const databaseUrlSchema = z
     "DATABASE_URL must start with postgres:// or postgresql://"
   );
 
-const rawEnvSchema = z
-  .object({
-    DATABASE_URL: databaseUrlSchema,
-    NODE_ENV: nodeEnvSchema.default("development"),
+/* =========================
+   SUPABASE (NOVO BLOCO)
+========================= */
 
-    /**
-     * SESSION COOKIE (contrato oficial atual)
-     */
-    AUTH_COOKIE_NAME: z.string().min(1).default("proceit_session"),
-    AUTH_COOKIE_DOMAIN: optionalNormalizedString,
-    AUTH_COOKIE_SECURE: booleanFromString("AUTH_COOKIE_SECURE").default("true"),
-    AUTH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
+const supabaseUrlSchema = z.string().min(1, "SUPABASE_URL is required");
+const supabaseKeySchema = z
+  .string()
+  .min(1, "SUPABASE_SERVICE_ROLE_KEY is required");
 
-    /**
-     * REFRESH COOKIE (etapa enterprise)
-     */
-    AUTH_REFRESH_COOKIE_NAME: z.string().min(1).default("proceit_refresh"),
-    AUTH_REFRESH_COOKIE_DOMAIN: optionalNormalizedString,
-    AUTH_REFRESH_COOKIE_SECURE: booleanFromString(
-      "AUTH_REFRESH_COOKIE_SECURE"
-    ).default("true"),
-    AUTH_REFRESH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
+/* =========================
+   ENV SCHEMA
+========================= */
 
-    /**
-     * TTLs
-     */
-    AUTH_SESSION_MAX_AGE_SECONDS: positiveIntegerFromString(
-      "AUTH_SESSION_MAX_AGE_SECONDS"
-    ).default(String(60 * 60 * 24 * 30)),
+const rawEnvSchema = z.object({
+  DATABASE_URL: databaseUrlSchema,
+  NODE_ENV: nodeEnvSchema.default("development"),
 
-    AUTH_REFRESH_MAX_AGE_SECONDS: positiveIntegerFromString(
-      "AUTH_REFRESH_MAX_AGE_SECONDS"
-    ).default(String(60 * 60 * 24 * 7)),
+  /* =========================
+     SUPABASE
+  ========================= */
 
-    /**
-     * Segurança / hashing
-     */
-    AUTH_BCRYPT_ROUNDS: rangedPositiveIntegerFromString(
-      "AUTH_BCRYPT_ROUNDS",
-      { min: 8, max: 15 }
-    ).default("10"),
-  })
-  .superRefine((data, ctx) => {
-    if (
-      data.AUTH_COOKIE_SAME_SITE === "none" &&
-      data.AUTH_COOKIE_SECURE !== true
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["AUTH_COOKIE_SAME_SITE"],
-        message: "AUTH_COOKIE_SAME_SITE=none requires AUTH_COOKIE_SECURE=true",
-      });
-    }
+  SUPABASE_URL: supabaseUrlSchema,
+  SUPABASE_SERVICE_ROLE_KEY: supabaseKeySchema,
 
-    if (
-      data.AUTH_REFRESH_COOKIE_SAME_SITE === "none" &&
-      data.AUTH_REFRESH_COOKIE_SECURE !== true
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["AUTH_REFRESH_COOKIE_SAME_SITE"],
-        message:
-          "AUTH_REFRESH_COOKIE_SAME_SITE=none requires AUTH_REFRESH_COOKIE_SECURE=true",
-      });
-    }
-  });
+  /* =========================
+     AUTH COOKIE
+  ========================= */
+
+  AUTH_COOKIE_NAME: z.string().min(1).default("proceit_session"),
+  AUTH_COOKIE_DOMAIN: optionalNormalizedString,
+  AUTH_COOKIE_SECURE: booleanFromString("AUTH_COOKIE_SECURE").default("true"),
+  AUTH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
+
+  AUTH_REFRESH_COOKIE_NAME: z.string().min(1).default("proceit_refresh"),
+  AUTH_REFRESH_COOKIE_DOMAIN: optionalNormalizedString,
+  AUTH_REFRESH_COOKIE_SECURE: booleanFromString(
+    "AUTH_REFRESH_COOKIE_SECURE"
+  ).default("true"),
+  AUTH_REFRESH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
+
+  AUTH_SESSION_MAX_AGE_SECONDS: positiveIntegerFromString(
+    "AUTH_SESSION_MAX_AGE_SECONDS"
+  ).default(String(60 * 60 * 24 * 30)),
+
+  AUTH_REFRESH_MAX_AGE_SECONDS: positiveIntegerFromString(
+    "AUTH_REFRESH_MAX_AGE_SECONDS"
+  ).default(String(60 * 60 * 24 * 7)),
+
+  AUTH_BCRYPT_ROUNDS: rangedPositiveIntegerFromString(
+    "AUTH_BCRYPT_ROUNDS",
+    { min: 8, max: 15 }
+  ).default("10"),
+});
+
+/* =========================
+   PARSE
+========================= */
 
 const parsedEnv = rawEnvSchema.parse({
   DATABASE_URL: process.env.DATABASE_URL,
   NODE_ENV: process.env.NODE_ENV,
+
+  SUPABASE_URL: process.env.SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
 
   AUTH_COOKIE_NAME: process.env.AUTH_COOKIE_NAME,
   AUTH_COOKIE_DOMAIN: process.env.AUTH_COOKIE_DOMAIN,
@@ -165,40 +167,12 @@ const parsedEnv = rawEnvSchema.parse({
   AUTH_BCRYPT_ROUNDS: process.env.AUTH_BCRYPT_ROUNDS,
 });
 
-function resolveSecureFlag(
-  explicitValue: boolean,
-  nodeEnv: z.infer<typeof nodeEnvSchema>
-): boolean {
-  /**
-   * Regra:
-   * - em produção, secure deve permanecer true;
-   * - em development/test, respeitamos o valor explícito do env.
-   */
-  if (nodeEnv === "production") {
-    return true;
-  }
-
-  return explicitValue;
-}
-
-const AUTH_COOKIE_SECURE = resolveSecureFlag(
-  parsedEnv.AUTH_COOKIE_SECURE,
-  parsedEnv.NODE_ENV
-);
-
-const AUTH_REFRESH_COOKIE_SECURE = resolveSecureFlag(
-  parsedEnv.AUTH_REFRESH_COOKIE_SECURE,
-  parsedEnv.NODE_ENV
-);
+/* =========================
+   FINAL EXPORT
+========================= */
 
 export const env = {
   ...parsedEnv,
-
-  AUTH_COOKIE_DOMAIN: parsedEnv.AUTH_COOKIE_DOMAIN,
-  AUTH_REFRESH_COOKIE_DOMAIN: parsedEnv.AUTH_REFRESH_COOKIE_DOMAIN,
-
-  AUTH_COOKIE_SECURE,
-  AUTH_REFRESH_COOKIE_SECURE,
 
   isProduction: parsedEnv.NODE_ENV === "production",
   isDevelopment: parsedEnv.NODE_ENV === "development",
