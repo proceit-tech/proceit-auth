@@ -180,9 +180,11 @@ if (!env.isProduction) {
 
 const db = Object.assign(sqlClient, {
   begin: async <T>(callback: DbTransactionCallback<T>): Promise<T> => {
-    return sqlClient.begin(async (tx) => {
-      return callback(tx);
+    const result = await sqlClient.begin(async (tx) => {
+      return callback(tx as Sql);
     });
+
+    return result as T;
   },
 }) as DbClient;
 
