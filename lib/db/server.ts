@@ -15,7 +15,10 @@ import postgres, {
 import { env } from "@/lib/config/env";
 
 declare global {
+  // eslint-disable-next-line no-var
   var __proceit_pg_pool__: Pool | undefined;
+
+  // eslint-disable-next-line no-var
   var __proceit_postgres_sql__: DbSqlClient | undefined;
 }
 
@@ -34,10 +37,6 @@ export type DbTransactionClient =
 
 type DbTransactionCallback<T> = (tx: DbTransactionClient) => Promise<T>;
 
-/**
- * IMPORTANTE:
- * NÃO sobrescrevemos begin
- */
 export type DbClient = DbSqlClient;
 
 /* =========================
@@ -51,7 +50,9 @@ const DB_CONNECTION_TIMEOUT_MILLISECONDS = 10_000;
 const DB_MAX_USES = 10_000;
 
 function buildSslConfigForPg(): PoolConfig["ssl"] {
-  return { rejectUnauthorized: false };
+  return {
+    rejectUnauthorized: false,
+  };
 }
 
 function buildSslConfigForPostgres():
@@ -137,7 +138,7 @@ if (!env.isProduction) {
    DB EXPORT
 ========================= */
 
-export const db = sqlClient;
+export const db: DbClient = sqlClient;
 
 /* =========================
    TRANSACTION WRAPPER
@@ -162,9 +163,15 @@ export async function checkDatabaseHealth(): Promise<{
   try {
     await db`select 1`;
 
-    return { ok: true, code: "DATABASE_OK" };
+    return {
+      ok: true,
+      code: "DATABASE_OK",
+    };
   } catch {
-    return { ok: false, code: "DATABASE_UNAVAILABLE" };
+    return {
+      ok: false,
+      code: "DATABASE_UNAVAILABLE",
+    };
   }
 }
 

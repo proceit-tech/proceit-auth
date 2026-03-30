@@ -1,7 +1,7 @@
 import "server-only";
 
 import {
-  db,
+  withDbTransaction,
   type DbTransactionClient,
 } from "@/lib/db/server";
 
@@ -14,6 +14,9 @@ const AUTH_ERROR_UNAUTHORIZED = "UNAUTHORIZED";
 type ApplySessionContextRow = {
   result: AuthContext | null;
 };
+
+type CallableDbTransactionClient =
+  DbTransactionClient & ((...args: any[]) => any);
 
 function isUuidLike(value: string | null | undefined): boolean {
   if (!value) {
@@ -75,6 +78,11 @@ async function resolveSessionContext(
   }
 }
 
+/**
+ * Retorna o contexto auth se a sessão atual for válida.
+ * Não tenta mutar cookie aqui; a responsabilidade de limpar cookie
+ * pertence às rotas HTTP que devolvem response ao cliente.
+ */
 export async function getAuthContext(): Promise<AuthContext | null> {
   const sessionId = await getSessionCookie();
 
@@ -85,24 +93,33 @@ export async function getAuthContext(): Promise<AuthContext | null> {
   return resolveSessionContext(sessionId);
 }
 
+/**
+ * Exige contexto auth válido.
+ * Se não houver sessão válida, lança UNAUTHORIZED.
+ */
 export async function requireAuthContext(): Promise<AuthContext> {
   const ctx = await getAuthContext();
   return assertAuthorizedContext(ctx);
 }
 
 /**
- * CORE: SQL AUTH CONTEXT
+ * Abre transação SQL aplicando o contexto auth oficial no banco.
+ *
+ * Uso:
+ * - garante que a sessão exista
+ * - chama core_identity.apply_session_context(session_id)
+ * - só então executa a callback transacional
  */
 export async function withSqlAuthContext<T>(
   callback: (
-    tx: DbTransactionClient & ((...args: any[]) => any),
+    tx: CallableDbTransactionClient,
     ctx: AuthContext
   ) => Promise<T>
 ): Promise<T> {
   const sessionId = await requireSessionId();
 
   const result = await withDbTransaction(async (tx) => {
-    const callableTx = tx as DbTransactionClient & ((...args: any[]) => any);
+    const callableTx = tx as CallableDbTransactionClient;
 
     const rows = (await callableTx`
       select core_identity.apply_session_context(${sessionId}::uuid) as result
