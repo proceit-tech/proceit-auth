@@ -499,7 +499,8 @@ export default function LoginPage() {
         tenant_hint: tenantHint,
         requested_lang: lang,
         login_context: {
-          authority: "auth.proceit.net",
+         authority:
+          typeof window !== "undefined" ? window.location.host : "proceit-auth.vercel.app",
           channel: "web",
           surface: "login-page",
           user_agent:
