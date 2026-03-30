@@ -263,4 +263,4 @@ export function getSupabaseEnv(): SupabaseEnv {
   }
 
   return result.data;
-}
+} 
