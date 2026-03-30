@@ -123,12 +123,13 @@ async function resolveSessionContext(
  */
 export async function getAuthContext(): Promise<AuthContext | null> {
   const sessionIdentifier = await getSessionCookie();
+  const normalizedSessionIdentifier = normalizeString(sessionIdentifier);
 
-  if (!normalizeString(sessionIdentifier)) {
+  if (!normalizedSessionIdentifier) {
     return null;
   }
 
-  return resolveSessionContext(sessionIdentifier);
+  return resolveSessionContext(normalizedSessionIdentifier);
 }
 
 /**
