@@ -34,7 +34,7 @@ export type DbTransactionClient = DbSqlClient;
 
 type DbTransactionCallback<T> = (tx: DbTransactionClient) => Promise<T>;
 
-type DbClient = Omit<DbSqlClient, "begin"> & {
+export type DbClient = DbSqlClient & {
   begin: <T>(callback: DbTransactionCallback<T>) => Promise<T>;
 };
 
@@ -134,18 +134,25 @@ if (!env.isProduction) {
 }
 
 /* =========================
-   DB HELPER
+   DB HELPER (FIX CRÍTICO)
 ========================= */
 
-const db: DbClient = Object.assign({}, sqlClient, {
-  begin: async <T>(callback: DbTransactionCallback<T>): Promise<T> => {
-    const result = await sqlClient.begin(async (tx) => {
-      return callback(tx as DbTransactionClient);
-    });
+/**
+ * IMPORTANTE:
+ * - NÃO usar Object.assign({}, sqlClient)
+ * - Isso quebra o comportamento callable (tagged template)
+ * - Precisamos manter db como função + métodos
+ */
 
-    return result as T;
-  },
-});
+const db = sqlClient as DbClient;
+
+db.begin = async <T>(callback: DbTransactionCallback<T>): Promise<T> => {
+  const result = await sqlClient.begin(async (tx) => {
+    return callback(tx as DbTransactionClient);
+  });
+
+  return result as T;
+};
 
 /* =========================
    HEALTH / LIFECYCLE
@@ -156,7 +163,7 @@ export async function checkDatabaseHealth(): Promise<{
   code: string;
 }> {
   try {
-    await sqlClient`select 1`;
+    await db`select 1`;
 
     return {
       ok: true,
@@ -187,4 +194,4 @@ export async function closeDatabaseConnections(): Promise<void> {
 ========================= */
 
 export { pool, db };
-export type { PoolClient, PostgresType, DbClient };
+export type { PoolClient, PostgresType };
