@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   ShieldCheck,
   RadioTower,
@@ -39,6 +39,13 @@ type LoginApiResponse = {
       code?: string | null;
     } | null;
   } | null;
+};
+
+type LoginQueryContext = {
+  returnTo: string | null;
+  clientApp: string | null;
+  tenantHint: string | null;
+  langHint: Lang;
 };
 
 const ALLOWED_RETURN_TO_ORIGINS = new Set<string>([
@@ -80,6 +87,30 @@ function sanitizeReturnTo(value: string | null) {
   } catch {
     return null;
   }
+}
+
+function resolveLang(value: string | null | undefined): Lang {
+  return value === "pt" ? "pt" : "es";
+}
+
+function readLoginQueryContextFromLocation(): LoginQueryContext {
+  if (typeof window === "undefined") {
+    return {
+      returnTo: null,
+      clientApp: null,
+      tenantHint: null,
+      langHint: "es",
+    };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+
+  return {
+    returnTo: sanitizeReturnTo(params.get("return_to")),
+    clientApp: params.get("client_app")?.trim() || null,
+    tenantHint: params.get("tenant_hint")?.trim() || null,
+    langHint: resolveLang(params.get("lang")),
+  };
 }
 
 function buildNextUrl(
@@ -266,9 +297,14 @@ function SignalCard({
 
 export default function LoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
-  const [lang, setLang] = useState<Lang>("es");
+  const [queryContext, setQueryContext] = useState<LoginQueryContext>(() =>
+    readLoginQueryContextFromLocation(),
+  );
+
+  const [lang, setLang] = useState<Lang>(() =>
+    readLoginQueryContextFromLocation().langHint,
+  );
 
   const [document, setDocument] = useState("");
   const [password, setPassword] = useState("");
@@ -283,41 +319,47 @@ export default function LoginPage() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const isMountedRef = useRef(true);
 
-  const returnTo = useMemo(
-    () => sanitizeReturnTo(searchParams.get("return_to")),
-    [searchParams],
-  );
-
-  const clientApp = useMemo(
-    () => searchParams.get("client_app")?.trim() || null,
-    [searchParams],
-  );
-
-  const tenantHint = useMemo(
-    () => searchParams.get("tenant_hint")?.trim() || null,
-    [searchParams],
-  );
-
-  const langHint = useMemo(() => {
-    const value = searchParams.get("lang");
-    return value === "pt" ? "pt" : "es";
-  }, [searchParams]);
-
-  useEffect(() => {
-    setLang(langHint);
-  }, [langHint]);
+  const returnTo = queryContext.returnTo;
+  const clientApp = queryContext.clientApp;
+  const tenantHint = queryContext.tenantHint;
+  const langHint = queryContext.langHint;
 
   useEffect(() => {
     isMountedRef.current = true;
 
+    const syncQueryContext = () => {
+      const nextContext = readLoginQueryContextFromLocation();
+
+      setQueryContext((current) => {
+        if (
+          current.returnTo === nextContext.returnTo &&
+          current.clientApp === nextContext.clientApp &&
+          current.tenantHint === nextContext.tenantHint &&
+          current.langHint === nextContext.langHint
+        ) {
+          return current;
+        }
+
+        return nextContext;
+      });
+    };
+
+    syncQueryContext();
+    window.addEventListener("popstate", syncQueryContext);
+
     return () => {
       isMountedRef.current = false;
+      window.removeEventListener("popstate", syncQueryContext);
 
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
     };
   }, []);
+
+  useEffect(() => {
+    setLang((current) => (current === langHint ? current : langHint));
+  }, [langHint]);
 
   const normalizedDocument = useMemo(
     () => normalizeDocument(document),
