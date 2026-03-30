@@ -109,7 +109,10 @@ function normalizeMemberships(input: unknown): MembershipLike[] {
 }
 
 function isMembershipCurrentlyValid(membership: MembershipLike): boolean {
-  if (typeof membership?.tenant_id !== "string" || !membership.tenant_id.trim()) {
+  if (
+    typeof membership?.tenant_id !== "string" ||
+    !membership.tenant_id.trim()
+  ) {
     return false;
   }
 
@@ -191,12 +194,17 @@ export async function GET(req: NextRequest) {
 
   try {
     /**
-     * Contrato oficial:
-     * cookie -> session_id (UUID)
+     * Contrato oficial atualizado:
+     * cookie -> session_token opaco
+     *
+     * Observação:
+     * - o cookie já não transporta obrigatoriamente o session_id UUID;
+     * - a resolução da sessão oficial acontece via getSessionContext(...),
+     *   que suporta o identificador transportado pelo runtime atual.
      */
-    const sessionId = await getSessionCookie();
+    const sessionToken = await getSessionCookie();
 
-    if (!sessionId) {
+    if (!sessionToken) {
       await logAuthEvent({
         event_code: "auth.me.session_not_found",
         event_type: "auth_me_session_not_found",
@@ -219,7 +227,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const ctx = await getSessionContext(sessionId);
+    const ctx = await getSessionContext(sessionToken);
 
     if (!ctx?.ok || !ctx.session || !ctx.user) {
       await logAuthEvent({
@@ -233,7 +241,7 @@ export async function GET(req: NextRequest) {
         method: AUTH_ME_METHOD,
         metadata: {
           session_present: true,
-          session_id: sessionId,
+          session_identifier: sessionToken,
           response_code: ctx?.code ?? "INVALID_SESSION",
           consumer,
         },
@@ -300,7 +308,8 @@ export async function GET(req: NextRequest) {
         route: AUTH_ME_ROUTE,
         method: AUTH_ME_METHOD,
         metadata: {
-          session_id: sessionId,
+          session_identifier: sessionToken,
+          session_id: ctx.session.id ?? null,
           user_id: ctx.user.id ?? null,
           memberships_count: memberships.length,
           valid_memberships_count: validMemberships.length,

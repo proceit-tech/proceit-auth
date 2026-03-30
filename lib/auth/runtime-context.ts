@@ -334,9 +334,7 @@ async function getPlatformRoles(userId: string): Promise<string[]> {
     [userId]
   );
 
-  return uniqueSorted(
-    result.rows.map((row: PlatformRoleRow) => row.role_code)
-  );
+  return uniqueSorted(result.rows.map((row: PlatformRoleRow) => row.role_code));
 }
 
 async function getTenantRoles(
@@ -353,9 +351,7 @@ async function getTenantRoles(
     [userId, tenantId]
   );
 
-  return uniqueSorted(
-    result.rows.map((row: TenantRoleRow) => row.role_code)
-  );
+  return uniqueSorted(result.rows.map((row: TenantRoleRow) => row.role_code));
 }
 
 async function getPermissions(
@@ -390,9 +386,7 @@ async function getModules(tenantId: string): Promise<string[]> {
     [tenantId]
   );
 
-  return uniqueSorted(
-    result.rows.map((row: ModuleRow) => row.module_code)
-  );
+  return uniqueSorted(result.rows.map((row: ModuleRow) => row.module_code));
 }
 
 async function getNavigation(
@@ -427,15 +421,23 @@ async function getNavigation(
 
 export async function getRuntimeContext(): Promise<RuntimeContext> {
   try {
-    const sessionId = await getSessionCookie();
+    /**
+     * O cookie oficial agora transporta session_token opaco,
+     * não necessariamente um UUID de sessão.
+     */
+    const sessionIdentifier = await getSessionCookie();
 
-    if (!sessionId || !isUuidLike(sessionId)) {
+    if (!sessionIdentifier || !normalizeString(sessionIdentifier)) {
       return createEmptyRuntimeContext();
     }
 
-    const authContext = await getSessionContext(sessionId);
+    const authContext = await getSessionContext(sessionIdentifier);
 
     if (!authContext.ok || !authContext.session || !authContext.user) {
+      return createEmptyRuntimeContext();
+    }
+
+    if (!isUuidLike(authContext.session.id) || !isUuidLike(authContext.user.id)) {
       return createEmptyRuntimeContext();
     }
 

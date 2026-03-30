@@ -197,21 +197,29 @@ async function clearCookieValue(definition: CookieDefinition): Promise<void> {
 
 /**
  * Contrato oficial:
- * - o cookie de sessão transporta exclusivamente o `session_id`;
- * - o valor esperado pelo runtime atual é o UUID da sessão;
+ * - o cookie de sessão transporta exclusivamente o `session_token` opaco;
+ * - o valor esperado pelo runtime HTTP é o token emitido pelo login,
+ *   nunca o UUID interno da sessão;
  * - nunca transportar user_id, tenant_id, roles, claims ou contexto serializado.
+ *
+ * Observação:
+ * - o session_id continua existindo no banco e nos logs,
+ *   mas não deve ser exposto como credencial de transporte no cliente.
  */
 export async function getSessionCookie(): Promise<string | null> {
   return getCookieValueByName(AUTH_COOKIE_NAME);
 }
 
-export async function setSessionCookie(sessionId: string): Promise<void> {
-  const normalizedSessionId = requireNonEmptyString(
-    sessionId,
-    "AUTH_SESSION_ID_REQUIRED"
+export async function setSessionCookie(sessionToken: string): Promise<void> {
+  const normalizedSessionToken = requireNonEmptyString(
+    sessionToken,
+    "AUTH_SESSION_TOKEN_REQUIRED"
   );
 
-  await setCookieValue(buildSessionCookieDefinition(), normalizedSessionId);
+  await setCookieValue(
+    buildSessionCookieDefinition(),
+    normalizedSessionToken
+  );
 }
 
 export async function clearSessionCookie(): Promise<void> {
@@ -261,15 +269,15 @@ export async function clearAuthCookies(): Promise<void> {
 }
 
 export async function setAuthCookies(params: {
-  sessionId: string;
+  sessionToken: string;
   refreshToken?: string | null;
 }): Promise<void> {
-  const normalizedSessionId = requireNonEmptyString(
-    params.sessionId,
-    "AUTH_SESSION_ID_REQUIRED"
+  const normalizedSessionToken = requireNonEmptyString(
+    params.sessionToken,
+    "AUTH_SESSION_TOKEN_REQUIRED"
   );
 
-  await setSessionCookie(normalizedSessionId);
+  await setSessionCookie(normalizedSessionToken);
 
   /**
    * Regra de consistência:
@@ -313,9 +321,9 @@ export function getRefreshCookieDefinition(): Readonly<CookieDefinition> {
  * Compatibilidade legada temporária.
  *
  * Observação:
- * - "session token" aqui é apenas nomenclatura legada;
- * - o contrato oficial do sistema é `sessionId` transportado por cookie httpOnly.
- * - remover estes aliases quando todos os imports antigos forem saneados.
+ * - "session token" aqui já corresponde ao contrato oficial atual;
+ * - manter estes aliases enquanto existirem imports antigos espalhados;
+ * - remover quando a base inteira estiver saneada.
  */
 export async function getSessionTokenFromCookie(): Promise<string | null> {
   return getSessionCookie();
@@ -329,4 +337,22 @@ export async function setSessionTokenCookie(
 
 export async function clearSessionTokenCookie(): Promise<void> {
   await clearSessionCookie();
+}
+
+/* =========================
+   COMPATIBILIDADE LEGADA ADICIONAL
+========================= */
+
+/**
+ * Alias de transição para chamadas antigas que ainda usam `sessionId`
+ * como nome de parâmetro no código TypeScript.
+ *
+ * Importante:
+ * - semanticamente este valor já é `sessionToken`;
+ * - manter apenas enquanto os pontos legados não forem saneados.
+ */
+export async function setSessionIdCookie(
+  sessionToken: string
+): Promise<void> {
+  await setSessionCookie(sessionToken);
 }

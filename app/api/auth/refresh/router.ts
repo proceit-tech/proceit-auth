@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/lib/config/env";
-import { refreshSessionWithToken } from "@/lib/auth/session";
+import {
+  getRefreshCookie,
+  getSessionCookie,
+} from "@/lib/auth/cookies";
+import {
+  getSessionContext,
+  refreshSessionWithToken,
+} from "@/lib/auth/session";
 import { logAuthEvent } from "@/lib/control-tower/events";
 
 const AUTH_REFRESH_ROUTE = "/api/auth/refresh";
 const AUTH_REFRESH_METHOD = "POST";
 
-type RefreshRouteResult = Awaited<ReturnType<typeof refreshSessionWithToken>> & {
+type RefreshRouteResult = Awaited<
+  ReturnType<typeof refreshSessionWithToken>
+> & {
   refresh_token?: string | null;
+  session_token?: string | null;
 };
 
 function getClientIp(req: NextRequest): string | null {
@@ -61,17 +71,6 @@ function resolveSameSite(
   return "lax";
 }
 
-function buildUnauthorizedPayload(message: string, code: string) {
-  return {
-    ok: false,
-    code,
-    message,
-    session_established: false,
-    next_step: "login_required",
-    next_path: "/login",
-  };
-}
-
 function clearAuthCookiesOnResponse(response: NextResponse): NextResponse {
   response.cookies.set({
     name: env.AUTH_COOKIE_NAME,
@@ -102,14 +101,14 @@ function clearAuthCookiesOnResponse(response: NextResponse): NextResponse {
 
 function applyAuthCookiesToResponse(params: {
   response: NextResponse;
-  sessionId: string;
+  sessionToken: string;
   refreshToken?: string | null;
 }): NextResponse {
-  const { response, sessionId, refreshToken } = params;
+  const { response, sessionToken, refreshToken } = params;
 
   response.cookies.set({
     name: env.AUTH_COOKIE_NAME,
-    value: sessionId,
+    value: sessionToken,
     httpOnly: true,
     secure: env.AUTH_COOKIE_SECURE,
     sameSite: resolveSameSite(env.AUTH_COOKIE_SAME_SITE),
@@ -144,6 +143,17 @@ function applyAuthCookiesToResponse(params: {
   }
 
   return response;
+}
+
+function buildUnauthorizedPayload(message: string, code: string) {
+  return {
+    ok: false,
+    code,
+    message,
+    session_established: false,
+    next_step: "login_required",
+    next_path: "/login",
+  };
 }
 
 function buildSuccessResponse(result: RefreshRouteResult) {
@@ -181,12 +191,15 @@ export async function POST(req: NextRequest) {
   const consumer = getConsumerMetadata(req);
 
   try {
-    const sessionId =
-      req.cookies.get(env.AUTH_COOKIE_NAME)?.value ?? null;
-    const refreshToken =
-      req.cookies.get(env.AUTH_REFRESH_COOKIE_NAME)?.value ?? null;
+    /**
+     * Contrato oficial atualizado:
+     * - cookie de sessão transporta session_token opaco
+     * - cookie de refresh transporta refresh_token opaco
+     */
+    const sessionToken = await getSessionCookie();
+    const refreshToken = await getRefreshCookie();
 
-    if (!sessionId || !refreshToken) {
+    if (!sessionToken || !refreshToken) {
       await logAuthEvent({
         event_code: "auth.refresh.missing_tokens",
         event_type: "auth_refresh_missing_tokens",
@@ -197,7 +210,7 @@ export async function POST(req: NextRequest) {
         route: AUTH_REFRESH_ROUTE,
         method: AUTH_REFRESH_METHOD,
         metadata: {
-          has_session: !!sessionId,
+          has_session: !!sessionToken,
           has_refresh: !!refreshToken,
           consumer,
         },
@@ -211,8 +224,43 @@ export async function POST(req: NextRequest) {
       return clearAuthCookiesOnResponse(response);
     }
 
+    /**
+     * O refresh SQL ainda opera por session_id real.
+     * Então primeiro resolvemos o contexto a partir do session_token.
+     */
+    const currentContext = await getSessionContext(sessionToken);
+
+    if (!currentContext?.ok || !currentContext.session?.id) {
+      await logAuthEvent({
+        event_code: "auth.refresh.invalid_session_token",
+        event_type: "auth_refresh_invalid_session_token",
+        severity: "warning",
+        message: "Session token inválido o no resolvible durante refresh.",
+        ip_address: ipAddress,
+        user_agent: userAgent,
+        route: AUTH_REFRESH_ROUTE,
+        method: AUTH_REFRESH_METHOD,
+        metadata: {
+          session_identifier: sessionToken,
+          has_refresh: !!refreshToken,
+          response_code: currentContext?.code ?? "INVALID_SESSION",
+          consumer,
+        },
+      });
+
+      const response = NextResponse.json(
+        buildUnauthorizedPayload(
+          "La sesión actual no es válida.",
+          "INVALID_SESSION"
+        ),
+        { status: 401 }
+      );
+
+      return clearAuthCookiesOnResponse(response);
+    }
+
     const result = (await refreshSessionWithToken({
-      sessionIdentifier: sessionId,
+      sessionIdentifier: currentContext.session.id,
       refreshToken,
     })) as RefreshRouteResult;
 
@@ -227,7 +275,8 @@ export async function POST(req: NextRequest) {
         route: AUTH_REFRESH_ROUTE,
         method: AUTH_REFRESH_METHOD,
         metadata: {
-          session_id: sessionId,
+          session_identifier: sessionToken,
+          session_id: currentContext.session.id,
           code: result.code,
           consumer,
         },
@@ -244,14 +293,23 @@ export async function POST(req: NextRequest) {
       return clearAuthCookiesOnResponse(response);
     }
 
-    const newSessionId = result.session?.id ?? sessionId;
+    /**
+     * Contrato desejado:
+     * - manter session_token no cookie de sessão
+     * - se a função SQL devolver novo refresh_token, rotacionar
+     *
+     * Como a sessão atual já foi resolvida pelo token opaco, e o runtime
+     * do banco segue centrado no session_id internamente, preservamos o
+     * token atual enquanto não houver rotação explícita do session_token.
+     */
+    const resolvedSessionToken = result.session_token ?? sessionToken;
     const newRefreshToken = result.refresh_token ?? null;
 
     const response = buildSuccessResponse(result);
 
     applyAuthCookiesToResponse({
       response,
-      sessionId: newSessionId,
+      sessionToken: resolvedSessionToken,
       refreshToken: newRefreshToken,
     });
 
@@ -267,7 +325,8 @@ export async function POST(req: NextRequest) {
       route: AUTH_REFRESH_ROUTE,
       method: AUTH_REFRESH_METHOD,
       metadata: {
-        session_id: newSessionId,
+        session_identifier: resolvedSessionToken,
+        session_id: result.session?.id ?? currentContext.session.id,
         refresh_rotated: !!newRefreshToken,
         requires_tenant_selection:
           result.requires_tenant_selection ?? false,

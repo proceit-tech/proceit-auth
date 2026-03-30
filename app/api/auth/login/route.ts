@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import {
-  clearSessionCookie,
-  setSessionCookie,
-} from "@/lib/auth/cookies";
+import { clearSessionCookie, setSessionCookie } from "@/lib/auth/cookies";
 import { authenticateByDocument } from "@/lib/auth/session";
 import { env } from "@/lib/config/env";
 import { logAuthEvent } from "@/lib/control-tower/events";
@@ -38,6 +35,10 @@ type ConsumerMetadata = {
   referer: string | null;
   host: string | null;
 };
+
+type AuthenticateByDocumentResult = Awaited<
+  ReturnType<typeof authenticateByDocument>
+>;
 
 function getClientIp(req: NextRequest): string | null {
   const forwardedFor = req.headers.get("x-forwarded-for");
@@ -139,7 +140,7 @@ function buildInternalErrorResponse() {
 }
 
 function buildSuccessResponse(params: {
-  authResult: Awaited<ReturnType<typeof authenticateByDocument>>;
+  authResult: AuthenticateByDocumentResult;
   flow: ReturnType<typeof buildLoginSuccessFlow>;
 }) {
   const { authResult, flow } = params;
@@ -159,8 +160,10 @@ function buildSuccessResponse(params: {
         authResult.requires_tenant_selection ?? false,
       active_tenant_id: authResult.active_tenant_id ?? null,
       expires_at: authResult.expires_at ?? null,
+      refresh_expires_at: authResult.refresh_expires_at ?? null,
       session: {
-        id: authResult.session_id,
+        id: authResult.session_id ?? null,
+        token_present: Boolean(authResult.session_token),
         active_tenant_id: authResult.active_tenant_id ?? null,
         membership_id: authResult.membership_id ?? null,
         role_code: authResult.role_code ?? null,
@@ -180,9 +183,9 @@ function buildSuccessResponse(params: {
 
 async function applySuccessfulLoginCookie(
   response: NextResponse,
-  sessionId: string
+  sessionToken: string
 ): Promise<NextResponse> {
-  await setSessionCookie(sessionId);
+  await setSessionCookie(sessionToken);
 
   /**
    * A rota devolve o response normal ao cliente.
@@ -282,7 +285,7 @@ export async function POST(req: NextRequest) {
       sessionHours: AUTH_SESSION_HOURS,
     });
 
-    if (!authResult.ok || !authResult.session_id) {
+    if (!authResult.ok || !authResult.session_token) {
       await logAuthEvent({
         event_code: "auth.login.failed",
         event_type: "auth_login_failed",
@@ -296,6 +299,8 @@ export async function POST(req: NextRequest) {
           original_document: originalDocument,
           normalized_document: documentNormalized,
           auth_code: authResult.code || "INVALID_CREDENTIALS",
+          session_id: authResult.session_id ?? null,
+          session_token_present: Boolean(authResult.session_token),
           requires_tenant_selection:
             authResult.requires_tenant_selection ?? false,
           consumer,
@@ -322,7 +327,7 @@ export async function POST(req: NextRequest) {
       flow,
     });
 
-    await applySuccessfulLoginCookie(response, authResult.session_id);
+    await applySuccessfulLoginCookie(response, authResult.session_token);
 
     await logAuthEvent({
       event_code: "auth.login.success",
@@ -338,7 +343,8 @@ export async function POST(req: NextRequest) {
       metadata: {
         original_document: originalDocument,
         normalized_document: documentNormalized,
-        session_id: authResult.session_id,
+        session_id: authResult.session_id ?? null,
+        session_token_present: true,
         active_tenant_id: authResult.active_tenant_id ?? null,
         membership_id: authResult.membership_id ?? null,
         role_code: authResult.role_code ?? null,
@@ -348,6 +354,7 @@ export async function POST(req: NextRequest) {
         next_step: flow.next_step,
         next_path: flow.next_path,
         session_expires_at: authResult.expires_at ?? null,
+        refresh_expires_at: authResult.refresh_expires_at ?? null,
         consumer,
       },
     });

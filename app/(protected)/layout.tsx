@@ -11,16 +11,34 @@ type Props = {
   children: ReactNode;
 };
 
+function buildLoginRedirect(): never {
+  redirect("/login?return_to=%2Fapp");
+}
+
+function buildTenantSelectionRedirect(): never {
+  redirect("/select-tenant");
+}
+
 export default async function ProtectedLayout({ children }: Props) {
   const lang: Lang = "es";
   const ctx = await getRuntimeContext();
 
+  /**
+   * Regra de proteção principal:
+   * - sem autenticação válida, volta ao login
+   * - com sessão válida porém sem escopo operacional resolvido,
+   *   força seleção de tenant
+   */
   if (!ctx.authenticated) {
-    redirect("/login");
+    buildLoginRedirect();
   }
 
-  if (ctx.requiresTenantSelection || !ctx.hasTenantScope || !ctx.activeTenant) {
-    redirect("/select-tenant");
+  if (
+    ctx.requiresTenantSelection ||
+    !ctx.hasTenantScope ||
+    !ctx.activeTenant
+  ) {
+    buildTenantSelectionRedirect();
   }
 
   return (

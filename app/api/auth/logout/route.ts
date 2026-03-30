@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { env } from "@/lib/config/env";
-import { getSessionContext, revokeSession } from "@/lib/auth/session";
+import {
+  getSessionContext,
+  revokeSession,
+} from "@/lib/auth/session";
 import { logAuthEvent } from "@/lib/control-tower/events";
 
 const AUTH_LOGOUT_ROUTE = "/api/auth/logout";
@@ -105,10 +108,13 @@ export async function POST(req: NextRequest) {
   const consumer = getConsumerMetadata(req);
 
   try {
-    const sessionId =
+    /**
+     * 🔥 CORREÇÃO: isso é session_token, não session_id
+     */
+    const sessionToken =
       req.cookies.get(env.AUTH_COOKIE_NAME)?.value ?? null;
 
-    if (!sessionId) {
+    if (!sessionToken) {
       const response = buildLogoutResponse();
 
       await logAuthEvent({
@@ -129,16 +135,24 @@ export async function POST(req: NextRequest) {
       return clearAuthCookies(response);
     }
 
+    /**
+     * 🔥 Resolver contexto primeiro
+     */
     let ctx: Awaited<ReturnType<typeof getSessionContext>> | null = null;
 
     try {
-      ctx = await getSessionContext(sessionId);
+      ctx = await getSessionContext(sessionToken);
     } catch {
       ctx = null;
     }
 
+    /**
+     * 🔥 Se conseguiu resolver, usa session_id real
+     */
+    const sessionId = ctx?.session?.id ?? null;
+
     const revokeResult = await revokeSession({
-      sessionIdentifier: sessionId,
+      sessionIdentifier: sessionId ?? sessionToken,
       reason: LOGOUT_REASON,
     });
 
@@ -155,6 +169,7 @@ export async function POST(req: NextRequest) {
         route: AUTH_LOGOUT_ROUTE,
         method: AUTH_LOGOUT_METHOD,
         metadata: {
+          session_identifier: sessionToken,
           session_id: sessionId,
           revoke_code: revokeResult?.code ?? "UNKNOWN",
           consumer,
@@ -179,7 +194,8 @@ export async function POST(req: NextRequest) {
       method: AUTH_LOGOUT_METHOD,
       metadata: {
         session_present: true,
-        session_id: ctx?.session?.id ?? sessionId,
+        session_identifier: sessionToken,
+        session_id: sessionId,
         active_tenant_id: ctx?.session?.active_tenant_id ?? null,
         logout_reason: LOGOUT_REASON,
         revoke_ok: revokeResult?.ok ?? false,

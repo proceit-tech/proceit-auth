@@ -28,6 +28,16 @@ function isUuidLike(value: string | null | undefined): boolean {
   );
 }
 
+function normalizeString(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+
+  return normalized.length > 0 ? normalized : null;
+}
+
 function isAuthorizedContext(
   ctx: AuthContext | null | undefined
 ): ctx is AuthContext {
@@ -44,31 +54,59 @@ function assertAuthorizedContext(
   return ctx;
 }
 
-function assertSessionId(sessionId: string | null | undefined): string {
-  if (typeof sessionId !== "string") {
+/**
+ * No runtime atual, o cookie oficial carrega session_token opaco,
+ * não necessariamente o UUID interno da sessão.
+ *
+ * Portanto:
+ * - não validar UUID na borda do cookie;
+ * - validar o contexto resolvido retornado pela função oficial;
+ * - só exigir UUID quando for necessário operar diretamente
+ *   sobre session_id já resolvido no contexto.
+ */
+function assertSessionIdentifier(
+  sessionIdentifier: string | null | undefined
+): string {
+  const normalized = normalizeString(sessionIdentifier);
+
+  if (!normalized) {
     throw new Error(AUTH_ERROR_UNAUTHORIZED);
   }
 
-  if (!isUuidLike(sessionId)) {
-    throw new Error(AUTH_ERROR_UNAUTHORIZED);
-  }
-
-  return sessionId;
+  return normalized;
 }
 
-async function requireSessionId(): Promise<string> {
-  const sessionId = await getSessionCookie();
-  return assertSessionId(sessionId);
+function assertSessionIdFromContext(
+  sessionId: string | null | undefined
+): string {
+  const normalized = normalizeString(sessionId);
+
+  if (!normalized || !isUuidLike(normalized)) {
+    throw new Error(AUTH_ERROR_UNAUTHORIZED);
+  }
+
+  return normalized;
+}
+
+async function requireSessionIdentifier(): Promise<string> {
+  const sessionIdentifier = await getSessionCookie();
+  return assertSessionIdentifier(sessionIdentifier);
 }
 
 async function resolveSessionContext(
-  sessionId: string
+  sessionIdentifier: string
 ): Promise<AuthContext | null> {
   try {
-    const validatedSessionId = assertSessionId(sessionId);
-    const ctx = await getSessionContext(validatedSessionId);
+    const validatedSessionIdentifier =
+      assertSessionIdentifier(sessionIdentifier);
+
+    const ctx = await getSessionContext(validatedSessionIdentifier);
 
     if (!isAuthorizedContext(ctx)) {
+      return null;
+    }
+
+    if (!ctx.session?.id || !isUuidLike(ctx.session.id)) {
       return null;
     }
 
@@ -84,13 +122,13 @@ async function resolveSessionContext(
  * pertence às rotas HTTP que devolvem response ao cliente.
  */
 export async function getAuthContext(): Promise<AuthContext | null> {
-  const sessionId = await getSessionCookie();
+  const sessionIdentifier = await getSessionCookie();
 
-  if (!sessionId || !isUuidLike(sessionId)) {
+  if (!normalizeString(sessionIdentifier)) {
     return null;
   }
 
-  return resolveSessionContext(sessionId);
+  return resolveSessionContext(sessionIdentifier);
 }
 
 /**
@@ -106,7 +144,8 @@ export async function requireAuthContext(): Promise<AuthContext> {
  * Abre transação SQL aplicando o contexto auth oficial no banco.
  *
  * Uso:
- * - garante que a sessão exista
+ * - resolve a sessão corrente a partir do cookie oficial
+ * - obtém o session_id real via getSessionContext(...)
  * - chama core_identity.apply_session_context(session_id)
  * - só então executa a callback transacional
  */
@@ -116,7 +155,10 @@ export async function withSqlAuthContext<T>(
     ctx: AuthContext
   ) => Promise<T>
 ): Promise<T> {
-  const sessionId = await requireSessionId();
+  const sessionIdentifier = await requireSessionIdentifier();
+  const resolvedContext = await resolveSessionContext(sessionIdentifier);
+  const ctx = assertAuthorizedContext(resolvedContext);
+  const sessionId = assertSessionIdFromContext(ctx.session?.id);
 
   const result = await withDbTransaction(async (tx) => {
     const callableTx = tx as CallableDbTransactionClient;
@@ -125,9 +167,9 @@ export async function withSqlAuthContext<T>(
       select core_identity.apply_session_context(${sessionId}::uuid) as result
     `) as ApplySessionContextRow[];
 
-    const ctx = assertAuthorizedContext(rows[0]?.result ?? null);
+    const appliedContext = assertAuthorizedContext(rows[0]?.result ?? null);
 
-    return callback(callableTx, ctx);
+    return callback(callableTx, appliedContext);
   });
 
   return result as T;

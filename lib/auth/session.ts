@@ -23,6 +23,8 @@ const DEFAULT_SESSION_HOURS = Math.max(
   Math.ceil(env.AUTH_SESSION_MAX_AGE_SECONDS / 3600)
 );
 
+const DEFAULT_REFRESH_HOURS = 168;
+
 const LOGIN_RESULT_EMPTY: LoginResult = {
   ok: false,
   code: "LOGIN_RESULT_EMPTY",
@@ -212,6 +214,29 @@ function resolveSessionHours(
   return DEFAULT_SESSION_HOURS;
 }
 
+function resolveRefreshHours(
+  refreshHours?: number
+): number {
+  if (
+    typeof refreshHours === "number" &&
+    Number.isFinite(refreshHours) &&
+    refreshHours > 0
+  ) {
+    return Math.ceil(refreshHours);
+  }
+
+  return DEFAULT_REFRESH_HOURS;
+}
+
+function resolveSessionIdentifier(
+  sessionIdentifier: string | null | undefined
+): string {
+  return requireNonEmptyTrimmedString(
+    sessionIdentifier,
+    "AUTH_SESSION_IDENTIFIER_REQUIRED"
+  );
+}
+
 /* =========================
    CORE EXECUTOR
 ========================= */
@@ -235,6 +260,12 @@ async function runSingleResultFunction<T>(params: {
 
 /**
  * LOGIN POR DOCUMENTO
+ *
+ * Fluxo oficial atual:
+ * - core_identity.login_with_document(...)
+ * - cria sessão real
+ * - gera session_token / refresh_token
+ * - retorna contexto unificado
  */
 export async function authenticateByDocument(params: {
   document: string;
@@ -242,20 +273,24 @@ export async function authenticateByDocument(params: {
   ipAddress?: string | null;
   userAgent?: string | null;
   sessionHours?: number;
+  refreshHours?: number;
 }): Promise<LoginResult> {
   const document = resolveDocument(params.document);
   const password = resolvePassword(params.password);
   const sessionHours = resolveSessionHours(params.sessionHours);
+  const refreshHours = resolveRefreshHours(params.refreshHours);
 
   return runSingleResultFunction<LoginResult>({
     queryFactory: async () => {
       return db<SqlFunctionResultRow<LoginResult>[]>`
-        select core_identity.authenticate_user_by_document(
+        select core_identity.login_with_document(
           ${document},
           ${password},
           ${params.ipAddress ?? null}::inet,
           ${params.userAgent ?? null},
-          ${sessionHours}
+          ${"auth.web"},
+          ${sessionHours},
+          ${refreshHours}
         ) as result
       `;
     },
@@ -266,17 +301,32 @@ export async function authenticateByDocument(params: {
 
 /**
  * CONTEXTO OFICIAL DE SESSÃO
+ *
+ * Aceita:
+ * - session_id (uuid)
+ * - session_token (texto)
+ *
+ * Isso é importante porque o cookie atual tende a carregar
+ * session_token, não session_id interno.
  */
 export async function getSessionContext(
   sessionIdentifier: string
 ): Promise<AuthContext> {
-  const sessionId = resolveSessionId(sessionIdentifier);
+  const resolvedIdentifier = resolveSessionIdentifier(sessionIdentifier);
 
   return runSingleResultFunction<AuthContext>({
     queryFactory: async () => {
+      if (isUuidLike(resolvedIdentifier)) {
+        return db<SqlFunctionResultRow<AuthContext>[]>`
+          select core_identity.get_session_context(
+            ${resolvedIdentifier}::uuid
+          ) as result
+        `;
+      }
+
       return db<SqlFunctionResultRow<AuthContext>[]>`
         select core_identity.get_session_context(
-          ${sessionId}::uuid
+          ${resolvedIdentifier}
         ) as result
       `;
     },
@@ -287,6 +337,9 @@ export async function getSessionContext(
 
 /**
  * SELEÇÃO DE TENANT NA SESSÃO OFICIAL
+ *
+ * Mantido por session_id (uuid), porque a função SQL atual
+ * de seleção de tenant opera sobre a sessão persistida.
  */
 export async function selectTenantForSession(params: {
   sessionIdentifier: string;
@@ -416,12 +469,15 @@ export async function revokeAllSessionsForUser(params: {
   try {
     const rows = await db<{ affected_sessions: number }[]>`
       with updated as (
-        update core_identity.auth_sessions
+        update core_identity.sessions
         set
           revoked_at = now(),
-          revoked_reason = ${reason}
+          revoke_reason = ${reason},
+          session_status = 'revoked',
+          updated_at = now()
         where user_id = ${userId}::uuid
           and revoked_at is null
+          and coalesce(session_status, 'active') = 'active'
         returning id
       )
       select count(*)::int as affected_sessions
@@ -462,12 +518,15 @@ export async function revokeSessionsByTenant(params: {
   try {
     const rows = await db<{ affected_sessions: number }[]>`
       with updated as (
-        update core_identity.auth_sessions
+        update core_identity.sessions
         set
           revoked_at = now(),
-          revoked_reason = ${reason}
+          revoke_reason = ${reason},
+          session_status = 'revoked',
+          updated_at = now()
         where active_tenant_id = ${tenantId}::uuid
           and revoked_at is null
+          and coalesce(session_status, 'active') = 'active'
         returning id
       )
       select count(*)::int as affected_sessions
