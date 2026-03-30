@@ -101,7 +101,7 @@ export async function withSqlAuthContext<T>(
 ): Promise<T> {
   const sessionId = await requireSessionId();
 
-  const result = await db.begin(async (tx) => {
+  const result = await withDbTransaction(async (tx) => {
     const callableTx = tx as DbTransactionClient & ((...args: any[]) => any);
 
     const rows = (await callableTx`

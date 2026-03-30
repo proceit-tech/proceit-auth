@@ -15,10 +15,7 @@ import postgres, {
 import { env } from "@/lib/config/env";
 
 declare global {
-  // eslint-disable-next-line no-var
   var __proceit_pg_pool__: Pool | undefined;
-
-  // eslint-disable-next-line no-var
   var __proceit_postgres_sql__: DbSqlClient | undefined;
 }
 
@@ -31,14 +28,17 @@ export type QueryRowsResult<T extends QueryResultRow> = {
 };
 
 export type DbSqlClient = Sql<Record<string, PostgresType>>;
+
 export type DbTransactionClient =
   TransactionSql<Record<string, PostgresType>>;
 
 type DbTransactionCallback<T> = (tx: DbTransactionClient) => Promise<T>;
 
-export type DbClient = DbSqlClient & {
-  begin: <T>(callback: DbTransactionCallback<T>) => Promise<T>;
-};
+/**
+ * IMPORTANTE:
+ * NÃO sobrescrevemos begin
+ */
+export type DbClient = DbSqlClient;
 
 /* =========================
    RUNTIME CONSTANTS
@@ -51,9 +51,7 @@ const DB_CONNECTION_TIMEOUT_MILLISECONDS = 10_000;
 const DB_MAX_USES = 10_000;
 
 function buildSslConfigForPg(): PoolConfig["ssl"] {
-  return {
-    rejectUnauthorized: false,
-  };
+  return { rejectUnauthorized: false };
 }
 
 function buildSslConfigForPostgres():
@@ -64,7 +62,7 @@ function buildSslConfigForPostgres():
 }
 
 /* =========================
-   PG POOL (query style)
+   PG POOL
 ========================= */
 
 function buildPoolConfig(): PoolConfig {
@@ -110,7 +108,7 @@ export async function query<T extends QueryResultRow>(
 }
 
 /* =========================
-   POSTGRES TAGGED CLIENT
+   POSTGRES CLIENT
 ========================= */
 
 function createSqlClient(): DbSqlClient {
@@ -136,21 +134,25 @@ if (!env.isProduction) {
 }
 
 /* =========================
-   DB HELPER
+   DB EXPORT
 ========================= */
 
-const db = sqlClient as DbClient;
-
-db.begin = async <T>(callback: DbTransactionCallback<T>): Promise<T> => {
-  const result = await sqlClient.begin(async (tx) => {
-    return callback(tx as DbTransactionClient);
-  });
-
-  return result as T;
-};
+export const db = sqlClient;
 
 /* =========================
-   HEALTH / LIFECYCLE
+   TRANSACTION WRAPPER
+========================= */
+
+export async function withDbTransaction<T>(
+  callback: DbTransactionCallback<T>
+): Promise<T> {
+  return sqlClient.begin(async (tx) => {
+    return callback(tx as DbTransactionClient);
+  });
+}
+
+/* =========================
+   HEALTH
 ========================= */
 
 export async function checkDatabaseHealth(): Promise<{
@@ -160,15 +162,9 @@ export async function checkDatabaseHealth(): Promise<{
   try {
     await db`select 1`;
 
-    return {
-      ok: true,
-      code: "DATABASE_OK",
-    };
+    return { ok: true, code: "DATABASE_OK" };
   } catch {
-    return {
-      ok: false,
-      code: "DATABASE_UNAVAILABLE",
-    };
+    return { ok: false, code: "DATABASE_UNAVAILABLE" };
   }
 }
 
@@ -184,9 +180,4 @@ export async function closeDatabaseConnections(): Promise<void> {
   await Promise.allSettled([closePool(), closeSqlClient()]);
 }
 
-/* =========================
-   EXPORTS
-========================= */
-
-export { pool, db };
 export type { PoolClient, PostgresType };
