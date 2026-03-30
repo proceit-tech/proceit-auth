@@ -9,7 +9,6 @@ import {
 import postgres, {
   type Sql,
   type PostgresType,
-  type TransactionSql,
 } from "postgres";
 
 import { env } from "@/lib/config/env";
@@ -19,7 +18,7 @@ declare global {
   var __proceit_pg_pool__: Pool | undefined;
 
   // eslint-disable-next-line no-var
-  var __proceit_postgres_sql__: Sql | undefined;
+  var __proceit_postgres_sql__: DbSqlClient | undefined;
 }
 
 /* =========================
@@ -30,11 +29,12 @@ export type QueryRowsResult<T extends QueryResultRow> = {
   rows: T[];
 };
 
-export type DbTransactionClient = TransactionSql<Record<string, PostgresType>>;
+export type DbSqlClient = Sql<Record<string, PostgresType>>;
+export type DbTransactionClient = Sql<Record<string, PostgresType>>;
 
 type DbTransactionCallback<T> = (tx: DbTransactionClient) => Promise<T>;
 
-type DbClient = Sql & {
+type DbClient = DbSqlClient & {
   begin: <T>(callback: DbTransactionCallback<T>) => Promise<T>;
 };
 
@@ -142,7 +142,7 @@ export async function query<T extends QueryResultRow>(
  * - ambos os clients devem permanecer apontando para o mesmo DATABASE_URL
  *   e mesma identidade de aplicação.
  */
-function createSqlClient(): Sql {
+function createSqlClient(): DbSqlClient {
   return postgres(env.DATABASE_URL, {
     ssl: buildSslConfigForPostgres(),
     max: DB_POOL_MAX_CONNECTIONS,
@@ -168,7 +168,7 @@ function createSqlClient(): Sql {
     connection: {
       application_name: DB_APPLICATION_NAME,
     },
-  });
+  }) as DbSqlClient;
 }
 
 const sqlClient = global.__proceit_postgres_sql__ ?? createSqlClient();
