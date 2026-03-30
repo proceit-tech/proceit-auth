@@ -8,6 +8,7 @@ import {
 } from "pg";
 import postgres, {
   type Sql,
+  type TransactionSql,
   type PostgresType,
 } from "postgres";
 
@@ -30,7 +31,8 @@ export type QueryRowsResult<T extends QueryResultRow> = {
 };
 
 export type DbSqlClient = Sql<Record<string, PostgresType>>;
-export type DbTransactionClient = DbSqlClient;
+export type DbTransactionClient =
+  TransactionSql<Record<string, PostgresType>>;
 
 type DbTransactionCallback<T> = (tx: DbTransactionClient) => Promise<T>;
 
@@ -134,15 +136,8 @@ if (!env.isProduction) {
 }
 
 /* =========================
-   DB HELPER (FIX CRÍTICO)
+   DB HELPER
 ========================= */
-
-/**
- * IMPORTANTE:
- * - NÃO usar Object.assign({}, sqlClient)
- * - Isso quebra o comportamento callable (tagged template)
- * - Precisamos manter db como função + métodos
- */
 
 const db = sqlClient as DbClient;
 
@@ -194,4 +189,4 @@ export async function closeDatabaseConnections(): Promise<void> {
 ========================= */
 
 export { pool, db };
-export type { PoolClient, PostgresType }; 
+export type { PoolClient, PostgresType };
