@@ -162,7 +162,11 @@ const rawEnvSchema = z
     }
   });
 
-const parsedEnv = rawEnvSchema.parse({
+/* =========================
+   PARSE INPUT
+========================= */
+
+const rawEnvInput = {
   DATABASE_URL: process.env.DATABASE_URL,
   NODE_ENV: process.env.NODE_ENV,
 
@@ -180,7 +184,20 @@ const parsedEnv = rawEnvSchema.parse({
   AUTH_REFRESH_MAX_AGE_SECONDS: process.env.AUTH_REFRESH_MAX_AGE_SECONDS,
 
   AUTH_BCRYPT_ROUNDS: process.env.AUTH_BCRYPT_ROUNDS,
-});
+};
+
+const parsedResult = rawEnvSchema.safeParse(rawEnvInput);
+
+if (!parsedResult.success) {
+  console.error("ENV_VALIDATION_ERROR", parsedResult.error.flatten());
+  throw parsedResult.error;
+}
+
+const parsedEnv = parsedResult.data;
+
+/* =========================
+   SECURE FLAG RESOLUTION
+========================= */
 
 function resolveSecureFlag(
   explicitValue: boolean,
@@ -202,6 +219,10 @@ const AUTH_REFRESH_COOKIE_SECURE = resolveSecureFlag(
   parsedEnv.AUTH_REFRESH_COOKIE_SECURE,
   parsedEnv.NODE_ENV
 );
+
+/* =========================
+   CORE ENV EXPORT
+========================= */
 
 export const env = {
   ...parsedEnv,
@@ -231,8 +252,15 @@ const supabaseEnvSchema = z.object({
 export type SupabaseEnv = z.infer<typeof supabaseEnvSchema>;
 
 export function getSupabaseEnv(): SupabaseEnv {
-  return supabaseEnvSchema.parse({
+  const result = supabaseEnvSchema.safeParse({
     SUPABASE_URL: process.env.SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
   });
+
+  if (!result.success) {
+    console.error("SUPABASE_ENV_VALIDATION_ERROR", result.error.flatten());
+    throw result.error;
+  }
+
+  return result.data;
 }
