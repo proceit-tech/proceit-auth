@@ -4,7 +4,6 @@ import {
   Pool,
   type PoolClient,
   type PoolConfig,
-  type QueryResult,
   type QueryResultRow,
 } from "pg";
 import postgres, {
@@ -21,6 +20,20 @@ declare global {
   // eslint-disable-next-line no-var
   var __proceit_postgres_sql__: Sql | undefined;
 }
+
+/* =========================
+   TYPES
+========================= */
+
+export type QueryRowsResult<T extends QueryResultRow> = {
+  rows: T[];
+};
+
+type DbTransactionCallback<T> = (tx: Sql) => Promise<T>;
+
+type DbClient = Sql & {
+  begin: <T>(callback: DbTransactionCallback<T>) => Promise<T>;
+};
 
 /* =========================
    RUNTIME CONSTANTS
@@ -90,11 +103,27 @@ if (!env.isProduction) {
   global.__proceit_pg_pool__ = pool;
 }
 
-export async function query<T extends QueryResultRow = QueryResultRow>(
+/**
+ * Wrapper tipado para uso padrão com query(text, params).
+ *
+ * Decisão de design:
+ * - expor somente { rows } para a maior parte do runtime atual;
+ * - evitar dependência desnecessária da estrutura completa de QueryResult
+ *   quando o projeto consome basicamente result.rows;
+ * - reforçar previsibilidade de tipagem em strict mode.
+ *
+ * Se no futuro algum ponto precisar de rowCount/command/etc,
+ * criar um helper dedicado (ex.: queryFull<T>).
+ */
+export async function query<T extends QueryResultRow>(
   text: string,
   params: unknown[] = []
-): Promise<QueryResult<T>> {
-  return pool.query<T>(text, params);
+): Promise<QueryRowsResult<T>> {
+  const result = await pool.query<T>(text, params);
+
+  return {
+    rows: result.rows as T[],
+  };
 }
 
 /* =========================
@@ -149,12 +178,6 @@ if (!env.isProduction) {
    DB HELPER
 ========================= */
 
-type DbTransactionCallback<T> = (tx: Sql) => Promise<T>;
-
-type DbClient = Sql & {
-  begin: <T>(callback: DbTransactionCallback<T>) => Promise<T>;
-};
-
 const db = Object.assign(sqlClient, {
   begin: async <T>(callback: DbTransactionCallback<T>): Promise<T> => {
     return sqlClient.begin(async (tx) => {
@@ -173,6 +196,7 @@ export async function checkDatabaseHealth(): Promise<{
 }> {
   try {
     await sqlClient`select 1`;
+
     return {
       ok: true,
       code: "DATABASE_OK",

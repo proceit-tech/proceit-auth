@@ -88,44 +88,31 @@ export type SessionRecord = {
   last_seen_at: IsoDateTimeString | null;
 };
 
-export type AuthContext = {
-  ok: boolean;
+export type AuthContextSuccess = {
+  ok: true;
   code: string;
   message?: string;
-
-  /**
-   * Quando `ok = true`, espera-se sessão válida.
-   */
-  session?: SessionRecord;
-
-  /**
-   * Quando `ok = true`, espera-se usuário válido.
-   */
-  user?: SessionUser;
-
-  /**
-   * Memberships conhecidas/retornadas pelo backend para o usuário autenticado.
-   */
+  session: SessionRecord;
+  user: SessionUser;
   memberships?: SessionMembership[];
-
-  /**
-   * Campo espelhado de conveniência.
-   * A fonte primária continua sendo `session.active_tenant_id`.
-   */
   requires_tenant_selection?: boolean;
-
-  /**
-   * Campo espelhado de conveniência.
-   * A fonte primária continua sendo `session.active_tenant_id`.
-   */
   active_tenant_id?: Uuid | null;
-
-  /**
-   * Espaço para informações adicionais devolvidas por funções SQL do auth.
-   * Não deve substituir os campos principais do contrato.
-   */
   context?: Record<string, unknown> | null;
 };
+
+export type AuthContextFailure = {
+  ok: false;
+  code: string;
+  message?: string;
+  session?: SessionRecord;
+  user?: SessionUser;
+  memberships?: SessionMembership[];
+  requires_tenant_selection?: boolean;
+  active_tenant_id?: Uuid | null;
+  context?: Record<string, unknown> | null;
+};
+
+export type AuthContext = AuthContextSuccess | AuthContextFailure;
 
 export type LoginResult = {
   ok: boolean;

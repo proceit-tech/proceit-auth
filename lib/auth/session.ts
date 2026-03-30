@@ -217,12 +217,12 @@ function resolveSessionHours(
 ========================= */
 
 async function runSingleResultFunction<T>(params: {
-  queryFactory: () => Promise<SqlFunctionResultRow<T>[]>;
+  queryFactory: () => Promise<unknown>;
   emptyFallback: T;
   errorFallback: T;
 }): Promise<T> {
   try {
-    const rows = await params.queryFactory();
+    const rows = (await params.queryFactory()) as SqlFunctionResultRow<T>[];
     return rows[0]?.result ?? params.emptyFallback;
   } catch {
     return params.errorFallback;

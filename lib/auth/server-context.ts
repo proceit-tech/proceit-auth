@@ -22,11 +22,15 @@ function isUuidLike(value: string | null | undefined): boolean {
   );
 }
 
-function isAuthorizedContext(ctx: AuthContext | null | undefined): ctx is AuthContext {
+function isAuthorizedContext(
+  ctx: AuthContext | null | undefined
+): ctx is AuthContext {
   return Boolean(ctx?.ok && ctx.session && ctx.user);
 }
 
-function assertAuthorizedContext(ctx: AuthContext | null | undefined): AuthContext {
+function assertAuthorizedContext(
+  ctx: AuthContext | null | undefined
+): AuthContext {
   if (!isAuthorizedContext(ctx)) {
     throw new Error(AUTH_ERROR_UNAUTHORIZED);
   }
@@ -107,9 +111,9 @@ export async function withSqlAuthContext<T>(
   const sessionId = await requireSessionId();
 
   return db.begin(async (tx) => {
-    const rows = await tx<ApplySessionContextRow[]>`
+    const rows = (await tx<ApplySessionContextRow[]>`
       select core_identity.apply_session_context(${sessionId}::uuid) as result
-    `;
+    `) as ApplySessionContextRow[];
 
     const ctx = assertAuthorizedContext(rows[0]?.result ?? null);
 

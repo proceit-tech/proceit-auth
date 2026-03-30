@@ -206,7 +206,12 @@ export async function getSessionCookie(): Promise<string | null> {
 }
 
 export async function setSessionCookie(sessionId: string): Promise<void> {
-  await setCookieValue(buildSessionCookieDefinition(), sessionId);
+  const normalizedSessionId = requireNonEmptyString(
+    sessionId,
+    "AUTH_SESSION_ID_REQUIRED"
+  );
+
+  await setCookieValue(buildSessionCookieDefinition(), normalizedSessionId);
 }
 
 export async function clearSessionCookie(): Promise<void> {
@@ -228,7 +233,15 @@ export async function getRefreshCookie(): Promise<string | null> {
 }
 
 export async function setRefreshCookie(refreshToken: string): Promise<void> {
-  await setCookieValue(buildRefreshCookieDefinition(), refreshToken);
+  const normalizedRefreshToken = requireNonEmptyString(
+    refreshToken,
+    "AUTH_REFRESH_TOKEN_REQUIRED"
+  );
+
+  await setCookieValue(
+    buildRefreshCookieDefinition(),
+    normalizedRefreshToken
+  );
 }
 
 export async function clearRefreshCookie(): Promise<void> {
@@ -240,8 +253,11 @@ export async function clearRefreshCookie(): Promise<void> {
 ========================= */
 
 export async function clearAuthCookies(): Promise<void> {
-  await clearSessionCookie();
-  await clearRefreshCookie();
+  const sessionDefinition = buildSessionCookieDefinition();
+  const refreshDefinition = buildRefreshCookieDefinition();
+
+  await clearCookieValue(sessionDefinition);
+  await clearCookieValue(refreshDefinition);
 }
 
 export async function setAuthCookies(params: {

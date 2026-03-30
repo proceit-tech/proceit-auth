@@ -68,6 +68,54 @@ export type RuntimeContext = {
 };
 
 /* =========================
+   INTERNAL DB ROW TYPES
+========================= */
+
+type TenantRow = {
+  id: string;
+  name: string;
+  code: string | null;
+};
+
+type ActiveMembershipRow = {
+  membership_id: string;
+  user_id: string;
+  tenant_id: string;
+  role_code: string | null;
+  status: string;
+  is_default: boolean;
+};
+
+type PlatformRoleRow = {
+  role_code: string;
+};
+
+type TenantRoleRow = {
+  role_code: string;
+};
+
+type PermissionRow = {
+  permission_code: string;
+};
+
+type ModuleRow = {
+  module_code: string;
+};
+
+type NavigationRow = {
+  code: string;
+  parent_code: string | null;
+  module_code: string | null;
+  label_es: string;
+  label_pt: string;
+  href: string | null;
+  icon: string | null;
+  item_type: "section" | "group" | "item";
+  sort_order: number;
+  metadata: Record<string, unknown> | null;
+};
+
+/* =========================
    CONSTANTS
 ========================= */
 
@@ -89,7 +137,9 @@ function normalizeString(value: unknown): string | null {
 }
 
 function isUuidLike(value: string | null | undefined): boolean {
-  if (!value) return false;
+  if (!value) {
+    return false;
+  }
 
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     value
@@ -138,15 +188,13 @@ function createEmptyRuntimeContext(
   };
 }
 
-function createAuthenticatedRuntimeContext(
-  params: {
-    sessionId: string;
-    user: RuntimeUser;
-    platformRoles?: string[];
-    requiresTenantSelection?: boolean;
-    hasMasterAccess?: boolean;
-  }
-): RuntimeContext {
+function createAuthenticatedRuntimeContext(params: {
+  sessionId: string;
+  user: RuntimeUser;
+  platformRoles?: string[];
+  requiresTenantSelection?: boolean;
+  hasMasterAccess?: boolean;
+}): RuntimeContext {
   return createEmptyRuntimeContext({
     authenticated: true,
     sessionId: params.sessionId,
@@ -212,11 +260,7 @@ function hasConsistentTenantScope(params: {
 ========================= */
 
 async function getTenantById(tenantId: string): Promise<RuntimeTenant | null> {
-  const result = await query<{
-    id: string;
-    name: string;
-    code: string | null;
-  }>(
+  const result = await query<TenantRow>(
     `
       select id, name, code
       from core_identity.tenants
@@ -226,9 +270,11 @@ async function getTenantById(tenantId: string): Promise<RuntimeTenant | null> {
     [tenantId]
   );
 
-  const row = result.rows[0];
+  const row = result.rows[0] as TenantRow | undefined;
 
-  if (!row) return null;
+  if (!row) {
+    return null;
+  }
 
   return {
     id: row.id,
@@ -241,14 +287,7 @@ async function getActiveMembership(
   userId: string,
   tenantId: string
 ): Promise<RuntimeMembership | null> {
-  const result = await query<{
-    membership_id: string;
-    user_id: string;
-    tenant_id: string;
-    role_code: string | null;
-    status: string;
-    is_default: boolean;
-  }>(
+  const result = await query<ActiveMembershipRow>(
     `
       select
         m.membership_id,
@@ -265,9 +304,11 @@ async function getActiveMembership(
     [userId, tenantId]
   );
 
-  const row = result.rows[0];
+  const row = result.rows[0] as ActiveMembershipRow | undefined;
 
-  if (!row) return null;
+  if (!row) {
+    return null;
+  }
 
   return {
     id: row.membership_id,
@@ -280,7 +321,7 @@ async function getActiveMembership(
 }
 
 async function getPlatformRoles(userId: string): Promise<string[]> {
-  const result = await query<{ role_code: string }>(
+  const result = await query<PlatformRoleRow>(
     `
       select distinct r.code as role_code
       from core_rbac.user_platform_roles upr
@@ -293,14 +334,16 @@ async function getPlatformRoles(userId: string): Promise<string[]> {
     [userId]
   );
 
-  return uniqueSorted(result.rows.map((r) => r.role_code));
+  return uniqueSorted(
+    result.rows.map((row: PlatformRoleRow) => row.role_code)
+  );
 }
 
 async function getTenantRoles(
   userId: string,
   tenantId: string
 ): Promise<string[]> {
-  const result = await query<{ role_code: string }>(
+  const result = await query<TenantRoleRow>(
     `
       select distinct role_code
       from core_rbac.v_membership_permissions
@@ -310,14 +353,16 @@ async function getTenantRoles(
     [userId, tenantId]
   );
 
-  return uniqueSorted(result.rows.map((r) => r.role_code));
+  return uniqueSorted(
+    result.rows.map((row: TenantRoleRow) => row.role_code)
+  );
 }
 
 async function getPermissions(
   userId: string,
   tenantId: string
 ): Promise<string[]> {
-  const result = await query<{ permission_code: string }>(
+  const result = await query<PermissionRow>(
     `
       select permission_code
       from core_rbac.get_membership_permission_codes($1::uuid, $2::uuid)
@@ -325,7 +370,9 @@ async function getPermissions(
     [userId, tenantId]
   );
 
-  return uniqueSorted(result.rows.map((r) => r.permission_code));
+  return uniqueSorted(
+    result.rows.map((row: PermissionRow) => row.permission_code)
+  );
 }
 
 /**
@@ -335,7 +382,7 @@ async function getPermissions(
  * este método deve ser substituído por uma função baseada em membership.
  */
 async function getModules(tenantId: string): Promise<string[]> {
-  const result = await query<{ module_code: string }>(
+  const result = await query<ModuleRow>(
     `
       select module_code
       from core_catalog.get_tenant_module_codes($1::uuid)
@@ -343,25 +390,16 @@ async function getModules(tenantId: string): Promise<string[]> {
     [tenantId]
   );
 
-  return uniqueSorted(result.rows.map((r) => r.module_code));
+  return uniqueSorted(
+    result.rows.map((row: ModuleRow) => row.module_code)
+  );
 }
 
 async function getNavigation(
   userId: string,
   tenantId: string
 ): Promise<RuntimeNavigationItem[]> {
-  const result = await query<{
-    code: string;
-    parent_code: string | null;
-    module_code: string | null;
-    label_es: string;
-    label_pt: string;
-    href: string | null;
-    icon: string | null;
-    item_type: "section" | "group" | "item";
-    sort_order: number;
-    metadata: Record<string, unknown> | null;
-  }>(
+  const result = await query<NavigationRow>(
     `
       select *
       from core_navigation.get_navigation_for_membership($1::uuid, $2::uuid)
@@ -369,7 +407,7 @@ async function getNavigation(
     [userId, tenantId]
   );
 
-  return result.rows.map((row) => ({
+  return result.rows.map((row: NavigationRow) => ({
     code: row.code,
     parentCode: row.parent_code,
     moduleCode: row.module_code,
@@ -465,7 +503,9 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
     });
 
     const normalizedTenantRoles = hasTenantScope ? uniqueSorted(tenantRoles) : [];
-    const normalizedPermissions = hasTenantScope ? uniqueSorted(permissions) : [];
+    const normalizedPermissions = hasTenantScope
+      ? uniqueSorted(permissions)
+      : [];
     const normalizedModules = hasTenantScope ? uniqueSorted(modules) : [];
     const normalizedNavigationFlat = hasTenantScope ? navigationFlat : [];
     const navigation = hasTenantScope
