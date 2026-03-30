@@ -5,7 +5,7 @@ import {
   type SupabaseClient,
 } from "@supabase/supabase-js";
 
-import { env } from "@/lib/config/env";
+import { env, getSupabaseEnv } from "@/lib/config/env";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -29,9 +29,11 @@ type SupabaseAdminClient = SupabaseClient;
  * - integrações auxiliares
  */
 function createSupabaseAdminClient(): SupabaseAdminClient {
+  const supabaseEnv = getSupabaseEnv();
+
   return createClient(
-    env.SUPABASE_URL,
-    env.SUPABASE_SERVICE_ROLE_KEY,
+    supabaseEnv.SUPABASE_URL,
+    supabaseEnv.SUPABASE_SERVICE_ROLE_KEY,
     {
       auth: {
         persistSession: false,
@@ -74,7 +76,10 @@ export async function checkSupabaseHealth(): Promise<{
   code: string;
 }> {
   try {
-    const { error } = await supabaseAdminClient.from("_health").select("*").limit(1);
+    const { error } = await supabaseAdminClient
+      .from("_health")
+      .select("*")
+      .limit(1);
 
     if (error) {
       return {

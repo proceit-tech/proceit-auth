@@ -54,8 +54,13 @@ const booleanFromString = (fieldName: string) =>
   z.string().transform((value, ctx) => {
     const normalized = value.trim().toLowerCase();
 
-    if (normalized === "true") return true;
-    if (normalized === "false") return false;
+    if (normalized === "true") {
+      return true;
+    }
+
+    if (normalized === "false") {
+      return false;
+    }
 
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -69,7 +74,7 @@ const optionalNormalizedString = z
   .string()
   .transform((value) => {
     const normalized = value.trim();
-    return normalized.length > 0 ? undefined : undefined;
+    return normalized.length > 0 ? normalized : undefined;
   })
   .optional();
 
@@ -87,69 +92,79 @@ const databaseUrlSchema = z
   );
 
 /* =========================
-   SUPABASE (NOVO BLOCO)
+   CORE ENV SCHEMA
 ========================= */
 
-const supabaseUrlSchema = z.string().min(1, "SUPABASE_URL is required");
-const supabaseKeySchema = z
-  .string()
-  .min(1, "SUPABASE_SERVICE_ROLE_KEY is required");
+const rawEnvSchema = z
+  .object({
+    DATABASE_URL: databaseUrlSchema,
+    NODE_ENV: nodeEnvSchema.default("development"),
 
-/* =========================
-   ENV SCHEMA
-========================= */
+    /**
+     * SESSION COOKIE
+     */
+    AUTH_COOKIE_NAME: z.string().min(1).default("proceit_session"),
+    AUTH_COOKIE_DOMAIN: optionalNormalizedString,
+    AUTH_COOKIE_SECURE: booleanFromString("AUTH_COOKIE_SECURE").default("true"),
+    AUTH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
 
-const rawEnvSchema = z.object({
-  DATABASE_URL: databaseUrlSchema,
-  NODE_ENV: nodeEnvSchema.default("development"),
+    /**
+     * REFRESH COOKIE
+     */
+    AUTH_REFRESH_COOKIE_NAME: z.string().min(1).default("proceit_refresh"),
+    AUTH_REFRESH_COOKIE_DOMAIN: optionalNormalizedString,
+    AUTH_REFRESH_COOKIE_SECURE: booleanFromString(
+      "AUTH_REFRESH_COOKIE_SECURE"
+    ).default("true"),
+    AUTH_REFRESH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
 
-  /* =========================
-     SUPABASE
-  ========================= */
+    /**
+     * TTLs
+     */
+    AUTH_SESSION_MAX_AGE_SECONDS: positiveIntegerFromString(
+      "AUTH_SESSION_MAX_AGE_SECONDS"
+    ).default(String(60 * 60 * 24 * 30)),
 
-  SUPABASE_URL: supabaseUrlSchema,
-  SUPABASE_SERVICE_ROLE_KEY: supabaseKeySchema,
+    AUTH_REFRESH_MAX_AGE_SECONDS: positiveIntegerFromString(
+      "AUTH_REFRESH_MAX_AGE_SECONDS"
+    ).default(String(60 * 60 * 24 * 7)),
 
-  /* =========================
-     AUTH COOKIE
-  ========================= */
+    /**
+     * Segurança / hashing
+     */
+    AUTH_BCRYPT_ROUNDS: rangedPositiveIntegerFromString(
+      "AUTH_BCRYPT_ROUNDS",
+      { min: 8, max: 15 }
+    ).default("10"),
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.AUTH_COOKIE_SAME_SITE === "none" &&
+      data.AUTH_COOKIE_SECURE !== true
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_COOKIE_SAME_SITE"],
+        message: "AUTH_COOKIE_SAME_SITE=none requires AUTH_COOKIE_SECURE=true",
+      });
+    }
 
-  AUTH_COOKIE_NAME: z.string().min(1).default("proceit_session"),
-  AUTH_COOKIE_DOMAIN: optionalNormalizedString,
-  AUTH_COOKIE_SECURE: booleanFromString("AUTH_COOKIE_SECURE").default("true"),
-  AUTH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
-
-  AUTH_REFRESH_COOKIE_NAME: z.string().min(1).default("proceit_refresh"),
-  AUTH_REFRESH_COOKIE_DOMAIN: optionalNormalizedString,
-  AUTH_REFRESH_COOKIE_SECURE: booleanFromString(
-    "AUTH_REFRESH_COOKIE_SECURE"
-  ).default("true"),
-  AUTH_REFRESH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
-
-  AUTH_SESSION_MAX_AGE_SECONDS: positiveIntegerFromString(
-    "AUTH_SESSION_MAX_AGE_SECONDS"
-  ).default(String(60 * 60 * 24 * 30)),
-
-  AUTH_REFRESH_MAX_AGE_SECONDS: positiveIntegerFromString(
-    "AUTH_REFRESH_MAX_AGE_SECONDS"
-  ).default(String(60 * 60 * 24 * 7)),
-
-  AUTH_BCRYPT_ROUNDS: rangedPositiveIntegerFromString(
-    "AUTH_BCRYPT_ROUNDS",
-    { min: 8, max: 15 }
-  ).default("10"),
-});
-
-/* =========================
-   PARSE
-========================= */
+    if (
+      data.AUTH_REFRESH_COOKIE_SAME_SITE === "none" &&
+      data.AUTH_REFRESH_COOKIE_SECURE !== true
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_REFRESH_COOKIE_SAME_SITE"],
+        message:
+          "AUTH_REFRESH_COOKIE_SAME_SITE=none requires AUTH_REFRESH_COOKIE_SECURE=true",
+      });
+    }
+  });
 
 const parsedEnv = rawEnvSchema.parse({
   DATABASE_URL: process.env.DATABASE_URL,
   NODE_ENV: process.env.NODE_ENV,
-
-  SUPABASE_URL: process.env.SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
 
   AUTH_COOKIE_NAME: process.env.AUTH_COOKIE_NAME,
   AUTH_COOKIE_DOMAIN: process.env.AUTH_COOKIE_DOMAIN,
@@ -167,14 +182,57 @@ const parsedEnv = rawEnvSchema.parse({
   AUTH_BCRYPT_ROUNDS: process.env.AUTH_BCRYPT_ROUNDS,
 });
 
-/* =========================
-   FINAL EXPORT
-========================= */
+function resolveSecureFlag(
+  explicitValue: boolean,
+  nodeEnv: z.infer<typeof nodeEnvSchema>
+): boolean {
+  if (nodeEnv === "production") {
+    return true;
+  }
+
+  return explicitValue;
+}
+
+const AUTH_COOKIE_SECURE = resolveSecureFlag(
+  parsedEnv.AUTH_COOKIE_SECURE,
+  parsedEnv.NODE_ENV
+);
+
+const AUTH_REFRESH_COOKIE_SECURE = resolveSecureFlag(
+  parsedEnv.AUTH_REFRESH_COOKIE_SECURE,
+  parsedEnv.NODE_ENV
+);
 
 export const env = {
   ...parsedEnv,
+
+  AUTH_COOKIE_DOMAIN: parsedEnv.AUTH_COOKIE_DOMAIN,
+  AUTH_REFRESH_COOKIE_DOMAIN: parsedEnv.AUTH_REFRESH_COOKIE_DOMAIN,
+
+  AUTH_COOKIE_SECURE,
+  AUTH_REFRESH_COOKIE_SECURE,
 
   isProduction: parsedEnv.NODE_ENV === "production",
   isDevelopment: parsedEnv.NODE_ENV === "development",
   isTest: parsedEnv.NODE_ENV === "test",
 } as const;
+
+/* =========================
+   SUPABASE ENV (LAZY)
+========================= */
+
+const supabaseEnvSchema = z.object({
+  SUPABASE_URL: z.string().min(1, "SUPABASE_URL is required"),
+  SUPABASE_SERVICE_ROLE_KEY: z
+    .string()
+    .min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
+});
+
+export type SupabaseEnv = z.infer<typeof supabaseEnvSchema>;
+
+export function getSupabaseEnv(): SupabaseEnv {
+  return supabaseEnvSchema.parse({
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
+}
