@@ -34,7 +34,7 @@ export type DbTransactionClient = DbSqlClient;
 
 type DbTransactionCallback<T> = (tx: DbTransactionClient) => Promise<T>;
 
-type DbClient = DbSqlClient & {
+type DbClient = Omit<DbSqlClient, "begin"> & {
   begin: <T>(callback: DbTransactionCallback<T>) => Promise<T>;
 };
 
@@ -137,7 +137,7 @@ if (!env.isProduction) {
    DB HELPER
 ========================= */
 
-const db = Object.assign(sqlClient, {
+const db: DbClient = Object.assign({}, sqlClient, {
   begin: async <T>(callback: DbTransactionCallback<T>): Promise<T> => {
     const result = await sqlClient.begin(async (tx) => {
       return callback(tx as DbTransactionClient);
@@ -145,7 +145,7 @@ const db = Object.assign(sqlClient, {
 
     return result as T;
   },
-}) as DbClient;
+});
 
 /* =========================
    HEALTH / LIFECYCLE
