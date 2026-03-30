@@ -1,6 +1,9 @@
 import "server-only";
 
-import { db } from "@/lib/db/server";
+import {
+  db,
+  type DbTransactionClient,
+} from "@/lib/db/server";
 
 import { getSessionCookie } from "@/lib/auth/cookies";
 import { getSessionContext } from "@/lib/auth/session";
@@ -106,19 +109,17 @@ export async function requireAuthContext(): Promise<AuthContext> {
  * - só então executa a callback transacional
  */
 export async function withSqlAuthContext<T>(
-  callback: (tx: typeof db, ctx: AuthContext) => Promise<T>
+  callback: (tx: DbTransactionClient, ctx: AuthContext) => Promise<T>
 ): Promise<T> {
   const sessionId = await requireSessionId();
 
-  const transaction = db.begin(async (tx) => {
-    const rows = (await tx<ApplySessionContextRow[]>`
+  return db.begin(async (tx) => {
+    const rows = (await tx`
       select core_identity.apply_session_context(${sessionId}::uuid) as result
     `) as ApplySessionContextRow[];
 
     const ctx = assertAuthorizedContext(rows[0]?.result ?? null);
 
-    return callback(tx as typeof db, ctx);
+    return callback(tx, ctx);
   });
-
-  return (await transaction) as T;
-} 
+}

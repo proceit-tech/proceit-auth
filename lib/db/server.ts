@@ -9,6 +9,7 @@ import {
 import postgres, {
   type Sql,
   type PostgresType,
+  type TransactionSql,
 } from "postgres";
 
 import { env } from "@/lib/config/env";
@@ -29,7 +30,9 @@ export type QueryRowsResult<T extends QueryResultRow> = {
   rows: T[];
 };
 
-type DbTransactionCallback<T> = (tx: Sql) => Promise<T>;
+export type DbTransactionClient = TransactionSql<Record<string, PostgresType>>;
+
+type DbTransactionCallback<T> = (tx: DbTransactionClient) => Promise<T>;
 
 type DbClient = Sql & {
   begin: <T>(callback: DbTransactionCallback<T>) => Promise<T>;
@@ -181,7 +184,7 @@ if (!env.isProduction) {
 const db = Object.assign(sqlClient, {
   begin: async <T>(callback: DbTransactionCallback<T>): Promise<T> => {
     const result = await sqlClient.begin(async (tx) => {
-      return callback(tx as Sql);
+      return callback(tx as DbTransactionClient);
     });
 
     return result as T;
