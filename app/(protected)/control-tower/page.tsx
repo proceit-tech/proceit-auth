@@ -313,11 +313,11 @@ export default async function ControlTowerPage() {
   const lang: Lang = "es";
 
   const data = await withSqlAuthContext(async (tx, ctx) => {
-    const runtime = await tx<RuntimeRow[]>`
+    const runtime = (await tx`
       select
         core_identity.current_app_user_id()::text as user_id,
         core_identity.current_app_tenant_id()::text as tenant_id
-    `;
+    `) as RuntimeRow[];
 
     return {
       ctx,
