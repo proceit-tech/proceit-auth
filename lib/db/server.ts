@@ -194,4 +194,4 @@ export async function closeDatabaseConnections(): Promise<void> {
 ========================= */
 
 export { pool, db };
-export type { PoolClient, PostgresType };
+export type { PoolClient, PostgresType }; 
