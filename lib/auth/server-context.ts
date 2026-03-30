@@ -110,7 +110,7 @@ export async function withSqlAuthContext<T>(
 ): Promise<T> {
   const sessionId = await requireSessionId();
 
-  return db.begin<T>(async (tx): Promise<T> => {
+  const transaction = db.begin(async (tx) => {
     const rows = (await tx<ApplySessionContextRow[]>`
       select core_identity.apply_session_context(${sessionId}::uuid) as result
     `) as ApplySessionContextRow[];
@@ -119,4 +119,6 @@ export async function withSqlAuthContext<T>(
 
     return callback(tx as typeof db, ctx);
   });
+
+  return (await transaction) as T;
 }
