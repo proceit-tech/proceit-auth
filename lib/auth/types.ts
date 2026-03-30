@@ -2,10 +2,11 @@
  * Tipos centrais do núcleo auth PROCEIT.
  *
  * Regras oficiais atuais:
- * - o cliente transporta `session_id` via cookie httpOnly;
- * - a sessão persistida em banco possui ID estrutural UUID;
- * - o runtime opera sobre session_id / user_id / tenant_id / membership_id;
- * - session_id é o contrato oficial atual entre app e backend;
+ * - o cliente transporta `session_token` via cookie httpOnly;
+ * - a sessão persistida em banco possui ID estrutural UUID (`session_id`);
+ * - o runtime opera internamente sobre session_id / user_id / tenant_id / membership_id;
+ * - session_token é o contrato oficial atual entre browser e backend;
+ * - session_id permanece como identificador estrutural interno e de observabilidade;
  * - não serializar contexto, user_id ou tenant_id dentro do cookie.
  */
 
@@ -57,7 +58,8 @@ export type SessionMembership = {
 export type SessionRecord = {
   /**
    * UUID estrutural da sessão persistida.
-   * Este é o valor transportado no cookie httpOnly como `session_id`.
+   * Este é o identificador interno oficial da sessão no banco.
+   * Não é o valor principal transportado no cookie no runtime atual.
    */
   id: Uuid;
 
@@ -120,20 +122,34 @@ export type LoginResult = {
   message?: string;
 
   /**
-   * Contrato oficial do login:
-   * - session_id é o identificador retornado ao app;
-   * - o cookie httpOnly transporta este valor.
+   * UUID estrutural interno da sessão.
+   * Mantido para logs, contexto SQL, observabilidade e compatibilidade.
    */
   session_id?: Uuid;
 
   /**
-   * Compatibilidade legada temporária.
-   * Não deve ser usada como contrato principal.
-   * Manter apenas enquanto existir alguma integração antiga.
+   * Contrato oficial atual do transporte HTTP:
+   * - session_token é o valor transportado no cookie httpOnly;
+   * - é um identificador opaco, não um UUID estrutural;
+   * - o backend resolve o contexto real a partir dele.
    */
-  session_token?: string;
+  session_token?: string | null;
 
-  expires_at?: IsoDateTimeString;
+  /**
+   * Refresh token opaco para rotação controlada de sessão.
+   */
+  refresh_token?: string | null;
+
+  /**
+   * Expiração principal da sessão autenticada.
+   */
+  expires_at?: IsoDateTimeString | null;
+
+  /**
+   * Expiração do refresh token, quando retornada pelo fluxo de login.
+   */
+  refresh_expires_at?: IsoDateTimeString | null;
+
   requires_tenant_selection?: boolean;
 
   /**
@@ -144,15 +160,28 @@ export type LoginResult = {
 
   membership_id?: Uuid | null;
   role_code?: string | null;
-  user?: SessionUser;
+
+  /**
+   * Alguns fluxos devolvem a sessão resumida em `session`,
+   * além dos campos espelhados de topo.
+   */
+  session?: SessionRecord | null;
+
+  user?: SessionUser | null;
   memberships?: SessionMembership[];
+  context?: Record<string, unknown> | null;
 };
 
 export type RefreshSessionResult = {
   ok: boolean;
   code: string;
   message?: string;
+
+  /**
+   * A sessão continua sendo referenciada internamente por SessionRecord.
+   */
   session?: SessionRecord;
+
   user?: SessionUser;
   memberships?: SessionMembership[];
   requires_tenant_selection?: boolean;
@@ -162,6 +191,13 @@ export type RefreshSessionResult = {
    * A fonte primária continua sendo `session.active_tenant_id`.
    */
   active_tenant_id?: Uuid | null;
+
+  /**
+   * Alguns fluxos de refresh podem rotacionar tokens.
+   */
+  session_token?: string | null;
+  refresh_token?: string | null;
+  refresh_expires_at?: IsoDateTimeString | null;
 };
 
 export type RevokeSessionResult = {
