@@ -75,11 +75,6 @@ async function resolveSessionContext(
   }
 }
 
-/**
- * Retorna o contexto auth se a sessão atual for válida.
- * Não tenta mutar cookie aqui; a responsabilidade de limpar cookie
- * pertence às rotas HTTP que devolvem response ao cliente.
- */
 export async function getAuthContext(): Promise<AuthContext | null> {
   const sessionId = await getSessionCookie();
 
@@ -90,37 +85,32 @@ export async function getAuthContext(): Promise<AuthContext | null> {
   return resolveSessionContext(sessionId);
 }
 
-/**
- * Exige contexto auth válido.
- * Se não houver sessão válida, lança UNAUTHORIZED.
- */
 export async function requireAuthContext(): Promise<AuthContext> {
   const ctx = await getAuthContext();
   return assertAuthorizedContext(ctx);
 }
 
 /**
- * Abre transação SQL aplicando o contexto auth oficial no banco.
- *
- * Uso:
- * - garante que a sessão exista
- * - chama core_identity.apply_session_context(session_id)
- * - injeta app.session_id / app.user_id / app.tenant_id / app.membership_id / app.role_code
- * - só então executa a callback transacional
+ * CORE: SQL AUTH CONTEXT
  */
 export async function withSqlAuthContext<T>(
-  callback: (tx: DbTransactionClient, ctx: AuthContext) => Promise<T>
+  callback: (
+    tx: DbTransactionClient & ((...args: any[]) => any),
+    ctx: AuthContext
+  ) => Promise<T>
 ): Promise<T> {
   const sessionId = await requireSessionId();
 
   const result = await db.begin(async (tx) => {
-    const rows = (await tx`
+    const callableTx = tx as DbTransactionClient & ((...args: any[]) => any);
+
+    const rows = (await callableTx`
       select core_identity.apply_session_context(${sessionId}::uuid) as result
     `) as ApplySessionContextRow[];
 
     const ctx = assertAuthorizedContext(rows[0]?.result ?? null);
 
-    return callback(tx, ctx);
+    return callback(callableTx, ctx);
   });
 
   return result as T;
