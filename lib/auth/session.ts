@@ -367,21 +367,28 @@ function normalizeLoginResult(raw: unknown): LoginResult {
     return LOGIN_RESULT_EMPTY;
   }
 
+  const ok = pickBoolean(root.ok) ?? false;
   const context = pickRecord(root.context);
   const contextSession = pickRecord(context?.session);
   const contextUser = pickRecord(context?.user);
 
-  const normalized: LoginResult = {
+  if (!ok) {
+    return {
+      ok: false,
+      code: pickOptionalString(root.code) ?? "LOGIN_RESULT_INVALID",
+      message:
+        pickOptionalString(root.message, root.detail) ??
+        "No fue posible autenticar la sesión.",
+    };
+  }
+
+  return {
     ...(root as unknown as LoginResult),
-    ok: pickBoolean(root.ok) ?? false,
-    code:
-      pickOptionalString(root.code) ??
-      (pickBoolean(root.ok) ? "AUTHENTICATED" : "LOGIN_RESULT_INVALID"),
+    ok: true,
+    code: pickOptionalString(root.code) ?? "AUTHENTICATED",
     message:
       pickOptionalString(root.message, root.detail) ??
-      (pickBoolean(root.ok)
-        ? "Sesión autenticada correctamente."
-        : "No fue posible autenticar la sesión."),
+      "Sesión autenticada correctamente.",
     session_id: pickOptionalString(
       root.session_id,
       root.sessionId,
@@ -447,9 +454,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
         context?.memberships
       ) as LoginResult["memberships"]) ?? [],
     context: (context as LoginResult["context"]) ?? undefined,
-  };
-
-  return normalized;
+  } as LoginResult;
 }
 
 function normalizeAuthContext(raw: unknown): AuthContext {
@@ -459,14 +464,22 @@ function normalizeAuthContext(raw: unknown): AuthContext {
     return SESSION_CONTEXT_EMPTY;
   }
 
+  const ok = pickBoolean(record.ok) ?? false;
+
+  if (!ok) {
+    return {
+      ok: false,
+      code: pickOptionalString(record.code) ?? "SESSION_CONTEXT_INVALID",
+      message:
+        pickOptionalString(record.message, record.detail) ??
+        "No fue posible obtener el contexto de la sesión.",
+    };
+  }
+
   return {
     ...(record as unknown as AuthContext),
-    ok: pickBoolean(record.ok) ?? false,
-    code: pickOptionalString(record.code) ?? "SESSION_CONTEXT_INVALID",
-    message:
-      pickOptionalString(record.message, record.detail) ??
-      "No fue posible obtener el contexto de la sesión.",
-  };
+    ok: true,
+  } as AuthContext;
 }
 
 function normalizeRevokeSessionResult(raw: unknown): RevokeSessionResult {
@@ -476,14 +489,26 @@ function normalizeRevokeSessionResult(raw: unknown): RevokeSessionResult {
     return SESSION_REVOKE_EMPTY;
   }
 
+  const ok = pickBoolean(record.ok) ?? false;
+
+  if (!ok) {
+    return {
+      ok: false,
+      code: pickOptionalString(record.code) ?? "SESSION_REVOKE_INVALID",
+      message:
+        pickOptionalString(record.message, record.detail) ??
+        "No fue posible revocar la sesión.",
+    };
+  }
+
   return {
     ...(record as unknown as RevokeSessionResult),
-    ok: pickBoolean(record.ok) ?? false,
-    code: pickOptionalString(record.code) ?? "SESSION_REVOKE_INVALID",
+    ok: true,
+    code: pickOptionalString(record.code) ?? "SESSION_REVOKED",
     message:
       pickOptionalString(record.message, record.detail) ??
-      "No fue posible revocar la sesión.",
-  };
+      "La sesión fue revocada correctamente.",
+  } as RevokeSessionResult;
 }
 
 function normalizeRefreshSessionResult(raw: unknown): RefreshSessionResult {
@@ -493,14 +518,26 @@ function normalizeRefreshSessionResult(raw: unknown): RefreshSessionResult {
     return SESSION_REFRESH_EMPTY;
   }
 
+  const ok = pickBoolean(record.ok) ?? false;
+
+  if (!ok) {
+    return {
+      ok: false,
+      code: pickOptionalString(record.code) ?? "SESSION_REFRESH_INVALID",
+      message:
+        pickOptionalString(record.message, record.detail) ??
+        "No fue posible refrescar la sesión.",
+    };
+  }
+
   return {
     ...(record as unknown as RefreshSessionResult),
-    ok: pickBoolean(record.ok) ?? false,
-    code: pickOptionalString(record.code) ?? "SESSION_REFRESH_INVALID",
+    ok: true,
+    code: pickOptionalString(record.code) ?? "SESSION_REFRESHED",
     message:
       pickOptionalString(record.message, record.detail) ??
-      "No fue posible refrescar la sesión.",
-  };
+      "La sesión fue refrescada correctamente.",
+  } as RefreshSessionResult;
 }
 
 /* =========================
