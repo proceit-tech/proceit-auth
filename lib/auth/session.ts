@@ -18,6 +18,8 @@ type BulkSessionMutationResult = {
   affected_sessions?: number;
 };
 
+type UnknownRecord = Record<string, unknown>;
+
 const DEFAULT_SESSION_HOURS = Math.max(
   1,
   Math.ceil(env.AUTH_SESSION_MAX_AGE_SECONDS / 3600)
@@ -144,39 +146,27 @@ function requireUuid(
   return value;
 }
 
-function resolveSessionId(
-  sessionId: string | null | undefined
-): string {
+function resolveSessionId(sessionId: string | null | undefined): string {
   return requireUuid(sessionId, "AUTH_SESSION_ID_REQUIRED");
 }
 
-function resolveTenantId(
-  tenantId: string | null | undefined
-): string {
+function resolveTenantId(tenantId: string | null | undefined): string {
   return requireUuid(tenantId, "AUTH_TENANT_ID_REQUIRED");
 }
 
-function resolveUserId(
-  userId: string | null | undefined
-): string {
+function resolveUserId(userId: string | null | undefined): string {
   return requireUuid(userId, "AUTH_USER_ID_REQUIRED");
 }
 
-function resolveDocument(
-  document: string | null | undefined
-): string {
+function resolveDocument(document: string | null | undefined): string {
   return requireNonEmptyTrimmedString(document, "AUTH_DOCUMENT_REQUIRED");
 }
 
-function resolvePassword(
-  password: string | null | undefined
-): string {
+function resolvePassword(password: string | null | undefined): string {
   return requireNonEmptyString(password, "AUTH_PASSWORD_REQUIRED");
 }
 
-function resolveRefreshToken(
-  token: string | null | undefined
-): string {
+function resolveRefreshToken(token: string | null | undefined): string {
   const resolved = requireNonEmptyString(
     token,
     "AUTH_REFRESH_TOKEN_REQUIRED"
@@ -200,9 +190,7 @@ function resolveReason(
   return reason.trim();
 }
 
-function resolveSessionHours(
-  sessionHours?: number
-): number {
+function resolveSessionHours(sessionHours?: number): number {
   if (
     typeof sessionHours === "number" &&
     Number.isFinite(sessionHours) &&
@@ -214,9 +202,7 @@ function resolveSessionHours(
   return DEFAULT_SESSION_HOURS;
 }
 
-function resolveRefreshHours(
-  refreshHours?: number
-): number {
+function resolveRefreshHours(refreshHours?: number): number {
   if (
     typeof refreshHours === "number" &&
     Number.isFinite(refreshHours) &&
@@ -238,18 +224,299 @@ function resolveSessionIdentifier(
 }
 
 /* =========================
+   NORMALIZAÇÃO / TYPE GUARDS
+========================= */
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseUnknownJson(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return value;
+  }
+
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+
+  return value;
+}
+
+function toRecord(value: unknown): UnknownRecord | null {
+  const parsed = parseUnknownJson(value);
+
+  if (isRecord(parsed)) {
+    return parsed;
+  }
+
+  return null;
+}
+
+function readString(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+
+  return null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === "true") {
+      return true;
+    }
+
+    if (normalized === "false") {
+      return false;
+    }
+  }
+
+  return null;
+}
+
+function readArray(value: unknown): unknown[] | null {
+  const parsed = parseUnknownJson(value);
+  return Array.isArray(parsed) ? parsed : null;
+}
+
+function readRecord(value: unknown): UnknownRecord | null {
+  return toRecord(value);
+}
+
+function pickString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = readString(value);
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function pickBoolean(...values: unknown[]): boolean | null {
+  for (const value of values) {
+    const normalized = readBoolean(value);
+
+    if (normalized !== null) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function pickArray(...values: unknown[]): unknown[] | null {
+  for (const value of values) {
+    const normalized = readArray(value);
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function pickRecord(...values: unknown[]): UnknownRecord | null {
+  for (const value of values) {
+    const normalized = readRecord(value);
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function normalizeLoginResult(raw: unknown): LoginResult {
+  const root = toRecord(raw);
+
+  if (!root) {
+    return LOGIN_RESULT_EMPTY;
+  }
+
+  const context = pickRecord(root.context);
+  const contextSession = pickRecord(context?.session);
+  const contextUser = pickRecord(context?.user);
+
+  const normalized: LoginResult = {
+    ...(root as unknown as LoginResult),
+    ok: pickBoolean(root.ok) ?? false,
+    code: pickString(root.code) ?? (pickBoolean(root.ok) ? "AUTHENTICATED" : "LOGIN_RESULT_INVALID"),
+    message:
+      pickString(root.message, root.detail) ??
+      (pickBoolean(root.ok)
+        ? "Sesión autenticada correctamente."
+        : "No fue posible autenticar la sesión."),
+    session_id: pickString(
+      root.session_id,
+      root.sessionId,
+      contextSession?.id,
+      contextSession?.session_id,
+      context?.session_id
+    ),
+    session_token: pickString(
+      root.session_token,
+      root.sessionToken,
+      contextSession?.session_token,
+      contextSession?.token,
+      context?.session_token
+    ),
+    refresh_token: pickString(
+      root.refresh_token,
+      root.refreshToken,
+      contextSession?.refresh_token,
+      context?.refresh_token
+    ),
+    expires_at: pickString(
+      root.expires_at,
+      root.expiresAt,
+      contextSession?.expires_at,
+      context?.expires_at
+    ),
+    refresh_expires_at: pickString(
+      root.refresh_expires_at,
+      root.refreshExpiresAt,
+      contextSession?.refresh_expires_at,
+      context?.refresh_expires_at
+    ),
+    active_tenant_id: pickString(
+      root.active_tenant_id,
+      root.activeTenantId,
+      contextSession?.active_tenant_id,
+      context?.active_tenant_id
+    ),
+    membership_id: pickString(
+      root.membership_id,
+      root.membershipId,
+      contextSession?.membership_id,
+      context?.membership_id
+    ),
+    role_code: pickString(
+      root.role_code,
+      root.roleCode,
+      contextSession?.role_code,
+      context?.role_code
+    ),
+    requires_tenant_selection:
+      pickBoolean(
+        root.requires_tenant_selection,
+        root.requiresTenantSelection,
+        context?.requires_tenant_selection
+      ) ?? false,
+    user:
+      (pickRecord(root.user, contextUser) as LoginResult["user"]) ??
+      null,
+    memberships:
+      (pickArray(root.memberships, context?.memberships) as LoginResult["memberships"]) ??
+      [],
+    context: (context as LoginResult["context"]) ?? undefined,
+  };
+
+  return normalized;
+}
+
+function normalizeAuthContext(raw: unknown): AuthContext {
+  const record = toRecord(raw);
+
+  if (!record) {
+    return SESSION_CONTEXT_EMPTY;
+  }
+
+  return {
+    ...(record as unknown as AuthContext),
+    ok: pickBoolean(record.ok) ?? false,
+    code: pickString(record.code) ?? "SESSION_CONTEXT_INVALID",
+    message:
+      pickString(record.message, record.detail) ??
+      "No fue posible obtener el contexto de la sesión.",
+  };
+}
+
+function normalizeRevokeSessionResult(raw: unknown): RevokeSessionResult {
+  const record = toRecord(raw);
+
+  if (!record) {
+    return SESSION_REVOKE_EMPTY;
+  }
+
+  return {
+    ...(record as unknown as RevokeSessionResult),
+    ok: pickBoolean(record.ok) ?? false,
+    code: pickString(record.code) ?? "SESSION_REVOKE_INVALID",
+    message:
+      pickString(record.message, record.detail) ??
+      "No fue posible revocar la sesión.",
+  };
+}
+
+function normalizeRefreshSessionResult(raw: unknown): RefreshSessionResult {
+  const record = toRecord(raw);
+
+  if (!record) {
+    return SESSION_REFRESH_EMPTY;
+  }
+
+  return {
+    ...(record as unknown as RefreshSessionResult),
+    ok: pickBoolean(record.ok) ?? false,
+    code: pickString(record.code) ?? "SESSION_REFRESH_INVALID",
+    message:
+      pickString(record.message, record.detail) ??
+      "No fue posible refrescar la sesión.",
+  };
+}
+
+/* =========================
    CORE EXECUTOR
 ========================= */
 
-async function runSingleResultFunction<T>(params: {
+async function runSingleResultFunction<TRaw, TNormalized>(params: {
   queryFactory: () => Promise<unknown>;
-  emptyFallback: T;
-  errorFallback: T;
-}): Promise<T> {
+  emptyFallback: TNormalized;
+  errorFallback: TNormalized;
+  normalize: (value: TRaw | null) => TNormalized;
+  errorLabel: string;
+}): Promise<TNormalized> {
   try {
-    const rows = (await params.queryFactory()) as SqlFunctionResultRow<T>[];
-    return rows[0]?.result ?? params.emptyFallback;
-  } catch {
+    const rows = (await params.queryFactory()) as SqlFunctionResultRow<TRaw>[];
+    const rawResult = rows[0]?.result ?? null;
+
+    if (rawResult === null) {
+      return params.emptyFallback;
+    }
+
+    return params.normalize(rawResult);
+  } catch (error) {
+    console.error(params.errorLabel, error);
     return params.errorFallback;
   }
 }
@@ -280,7 +547,7 @@ export async function authenticateByDocument(params: {
   const sessionHours = resolveSessionHours(params.sessionHours);
   const refreshHours = resolveRefreshHours(params.refreshHours);
 
-  return runSingleResultFunction<LoginResult>({
+  return runSingleResultFunction<LoginResult, LoginResult>({
     queryFactory: async () => {
       return db<SqlFunctionResultRow<LoginResult>[]>`
         select core_identity.login_with_document(
@@ -296,6 +563,8 @@ export async function authenticateByDocument(params: {
     },
     emptyFallback: LOGIN_RESULT_EMPTY,
     errorFallback: LOGIN_RESULT_FAILED,
+    normalize: normalizeLoginResult,
+    errorLabel: "AUTH_AUTHENTICATE_BY_DOCUMENT_ERROR",
   });
 }
 
@@ -314,7 +583,7 @@ export async function getSessionContext(
 ): Promise<AuthContext> {
   const resolvedIdentifier = resolveSessionIdentifier(sessionIdentifier);
 
-  return runSingleResultFunction<AuthContext>({
+  return runSingleResultFunction<AuthContext, AuthContext>({
     queryFactory: async () => {
       if (isUuidLike(resolvedIdentifier)) {
         return db<SqlFunctionResultRow<AuthContext>[]>`
@@ -332,6 +601,8 @@ export async function getSessionContext(
     },
     emptyFallback: SESSION_CONTEXT_EMPTY,
     errorFallback: SESSION_CONTEXT_FAILED,
+    normalize: normalizeAuthContext,
+    errorLabel: "AUTH_GET_SESSION_CONTEXT_ERROR",
   });
 }
 
@@ -348,7 +619,7 @@ export async function selectTenantForSession(params: {
   const sessionId = resolveSessionId(params.sessionIdentifier);
   const tenantId = resolveTenantId(params.tenantId);
 
-  return runSingleResultFunction<AuthContext>({
+  return runSingleResultFunction<AuthContext, AuthContext>({
     queryFactory: async () => {
       return db<SqlFunctionResultRow<AuthContext>[]>`
         select core_identity.select_session_tenant(
@@ -359,6 +630,8 @@ export async function selectTenantForSession(params: {
     },
     emptyFallback: TENANT_SELECTION_EMPTY,
     errorFallback: TENANT_SELECTION_FAILED,
+    normalize: normalizeAuthContext,
+    errorLabel: "AUTH_SELECT_TENANT_FOR_SESSION_ERROR",
   });
 }
 
@@ -377,7 +650,7 @@ export async function revokeSession(params: {
   const sessionId = resolveSessionId(params.sessionIdentifier);
   const reason = resolveReason(params.reason, "session_revoked");
 
-  return runSingleResultFunction<RevokeSessionResult>({
+  return runSingleResultFunction<RevokeSessionResult, RevokeSessionResult>({
     queryFactory: async () => {
       return db<SqlFunctionResultRow<RevokeSessionResult>[]>`
         select core_identity.revoke_session(
@@ -388,6 +661,8 @@ export async function revokeSession(params: {
     },
     emptyFallback: SESSION_REVOKE_EMPTY,
     errorFallback: SESSION_REVOKE_FAILED,
+    normalize: normalizeRevokeSessionResult,
+    errorLabel: "AUTH_REVOKE_SESSION_ERROR",
   });
 }
 
@@ -404,7 +679,7 @@ export async function logoutSession(params: {
   const sessionId = resolveSessionId(params.sessionIdentifier);
   const reason = resolveReason(params.reason, "user_logout");
 
-  return runSingleResultFunction<RevokeSessionResult>({
+  return runSingleResultFunction<RevokeSessionResult, RevokeSessionResult>({
     queryFactory: async () => {
       return db<SqlFunctionResultRow<RevokeSessionResult>[]>`
         select core_identity.logout_session(
@@ -415,6 +690,8 @@ export async function logoutSession(params: {
     },
     emptyFallback: SESSION_REVOKE_EMPTY,
     errorFallback: SESSION_REVOKE_FAILED,
+    normalize: normalizeRevokeSessionResult,
+    errorLabel: "AUTH_LOGOUT_SESSION_ERROR",
   });
 }
 
@@ -428,7 +705,7 @@ export async function refreshSessionWithToken(params: {
   const sessionId = resolveSessionId(params.sessionIdentifier);
   const refreshToken = resolveRefreshToken(params.refreshToken);
 
-  return runSingleResultFunction<RefreshSessionResult>({
+  return runSingleResultFunction<RefreshSessionResult, RefreshSessionResult>({
     queryFactory: async () => {
       return db<SqlFunctionResultRow<RefreshSessionResult>[]>`
         select core_identity.refresh_session_with_token(
@@ -439,6 +716,8 @@ export async function refreshSessionWithToken(params: {
     },
     emptyFallback: SESSION_REFRESH_EMPTY,
     errorFallback: SESSION_REFRESH_FAILED,
+    normalize: normalizeRefreshSessionResult,
+    errorLabel: "AUTH_REFRESH_SESSION_WITH_TOKEN_ERROR",
   });
 }
 

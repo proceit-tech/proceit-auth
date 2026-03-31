@@ -128,6 +128,22 @@ function buildUnauthorizedResponse(params: {
   );
 }
 
+function buildSessionContractErrorResponse(params?: {
+  code?: string;
+  message?: string;
+}) {
+  return NextResponse.json(
+    {
+      ok: false,
+      code: params?.code || "LOGIN_SESSION_CONTRACT_ERROR",
+      message:
+        params?.message ||
+        "La autenticación fue validada, pero no se pudo establecer la sesión.",
+    },
+    { status: 500 }
+  );
+}
+
 function buildInternalErrorResponse() {
   return NextResponse.json(
     {
@@ -199,6 +215,12 @@ async function applyFailedLoginCleanup(
 ): Promise<NextResponse> {
   await clearSessionCookie();
   return response;
+}
+
+function isAuthenticatedWithoutSessionToken(
+  authResult: AuthenticateByDocumentResult
+): boolean {
+  return Boolean(authResult.ok) && !authResult.session_token;
 }
 
 export async function POST(req: NextRequest) {
@@ -285,7 +307,7 @@ export async function POST(req: NextRequest) {
       sessionHours: AUTH_SESSION_HOURS,
     });
 
-    if (!authResult.ok || !authResult.session_token) {
+    if (!authResult.ok) {
       await logAuthEvent({
         event_code: "auth.login.failed",
         event_type: "auth_login_failed",
@@ -316,6 +338,46 @@ export async function POST(req: NextRequest) {
       return applyFailedLoginCleanup(response);
     }
 
+    if (isAuthenticatedWithoutSessionToken(authResult)) {
+      await logAuthEvent({
+        event_code: "auth.login.session_contract_error",
+        event_type: "auth_login_session_contract_error",
+        severity: "error",
+        message:
+          "Login autenticado sin session_token utilizable en la capa Node.",
+        user_id: authResult.user?.id ?? null,
+        tenant_id: authResult.active_tenant_id ?? null,
+        ip_address: ipAddress,
+        user_agent: userAgent,
+        route: AUTH_LOGIN_ROUTE,
+        method: AUTH_LOGIN_METHOD,
+        metadata: {
+          original_document: originalDocument,
+          normalized_document: documentNormalized,
+          auth_code: authResult.code || "AUTHENTICATED_WITHOUT_SESSION_TOKEN",
+          session_id: authResult.session_id ?? null,
+          session_token_present: false,
+          active_tenant_id: authResult.active_tenant_id ?? null,
+          membership_id: authResult.membership_id ?? null,
+          role_code: authResult.role_code ?? null,
+          requires_tenant_selection:
+            authResult.requires_tenant_selection ?? false,
+          expires_at: authResult.expires_at ?? null,
+          refresh_expires_at: authResult.refresh_expires_at ?? null,
+          consumer,
+          auth_result_snapshot: authResult,
+        },
+      });
+
+      const response = buildSessionContractErrorResponse({
+        code: "LOGIN_SESSION_TOKEN_MISSING",
+        message:
+          "La autenticación fue validada, pero no se recibió un session_token válido.",
+      });
+
+      return applyFailedLoginCleanup(response);
+    }
+
     const flow = buildLoginSuccessFlow({
       requiresTenantSelection:
         authResult.requires_tenant_selection ?? false,
@@ -327,7 +389,7 @@ export async function POST(req: NextRequest) {
       flow,
     });
 
-    await applySuccessfulLoginCookie(response, authResult.session_token);
+    await applySuccessfulLoginCookie(response, authResult.session_token!);
 
     await logAuthEvent({
       event_code: "auth.login.success",
