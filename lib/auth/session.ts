@@ -320,6 +320,10 @@ function pickString(...values: unknown[]): string | null {
   return null;
 }
 
+function pickOptionalString(...values: unknown[]): string | undefined {
+  return pickString(...values) ?? undefined;
+}
+
 function pickBoolean(...values: unknown[]): boolean | null {
   for (const value of values) {
     const normalized = readBoolean(value);
@@ -370,57 +374,59 @@ function normalizeLoginResult(raw: unknown): LoginResult {
   const normalized: LoginResult = {
     ...(root as unknown as LoginResult),
     ok: pickBoolean(root.ok) ?? false,
-    code: pickString(root.code) ?? (pickBoolean(root.ok) ? "AUTHENTICATED" : "LOGIN_RESULT_INVALID"),
+    code:
+      pickOptionalString(root.code) ??
+      (pickBoolean(root.ok) ? "AUTHENTICATED" : "LOGIN_RESULT_INVALID"),
     message:
-      pickString(root.message, root.detail) ??
+      pickOptionalString(root.message, root.detail) ??
       (pickBoolean(root.ok)
         ? "Sesión autenticada correctamente."
         : "No fue posible autenticar la sesión."),
-    session_id: pickString(
+    session_id: pickOptionalString(
       root.session_id,
       root.sessionId,
       contextSession?.id,
       contextSession?.session_id,
       context?.session_id
     ),
-    session_token: pickString(
+    session_token: pickOptionalString(
       root.session_token,
       root.sessionToken,
       contextSession?.session_token,
       contextSession?.token,
       context?.session_token
     ),
-    refresh_token: pickString(
+    refresh_token: pickOptionalString(
       root.refresh_token,
       root.refreshToken,
       contextSession?.refresh_token,
       context?.refresh_token
     ),
-    expires_at: pickString(
+    expires_at: pickOptionalString(
       root.expires_at,
       root.expiresAt,
       contextSession?.expires_at,
       context?.expires_at
     ),
-    refresh_expires_at: pickString(
+    refresh_expires_at: pickOptionalString(
       root.refresh_expires_at,
       root.refreshExpiresAt,
       contextSession?.refresh_expires_at,
       context?.refresh_expires_at
     ),
-    active_tenant_id: pickString(
+    active_tenant_id: pickOptionalString(
       root.active_tenant_id,
       root.activeTenantId,
       contextSession?.active_tenant_id,
       context?.active_tenant_id
     ),
-    membership_id: pickString(
+    membership_id: pickOptionalString(
       root.membership_id,
       root.membershipId,
       contextSession?.membership_id,
       context?.membership_id
     ),
-    role_code: pickString(
+    role_code: pickOptionalString(
       root.role_code,
       root.roleCode,
       contextSession?.role_code,
@@ -434,10 +440,12 @@ function normalizeLoginResult(raw: unknown): LoginResult {
       ) ?? false,
     user:
       (pickRecord(root.user, contextUser) as LoginResult["user"]) ??
-      null,
+      undefined,
     memberships:
-      (pickArray(root.memberships, context?.memberships) as LoginResult["memberships"]) ??
-      [],
+      (pickArray(
+        root.memberships,
+        context?.memberships
+      ) as LoginResult["memberships"]) ?? [],
     context: (context as LoginResult["context"]) ?? undefined,
   };
 
@@ -454,9 +462,9 @@ function normalizeAuthContext(raw: unknown): AuthContext {
   return {
     ...(record as unknown as AuthContext),
     ok: pickBoolean(record.ok) ?? false,
-    code: pickString(record.code) ?? "SESSION_CONTEXT_INVALID",
+    code: pickOptionalString(record.code) ?? "SESSION_CONTEXT_INVALID",
     message:
-      pickString(record.message, record.detail) ??
+      pickOptionalString(record.message, record.detail) ??
       "No fue posible obtener el contexto de la sesión.",
   };
 }
@@ -471,9 +479,9 @@ function normalizeRevokeSessionResult(raw: unknown): RevokeSessionResult {
   return {
     ...(record as unknown as RevokeSessionResult),
     ok: pickBoolean(record.ok) ?? false,
-    code: pickString(record.code) ?? "SESSION_REVOKE_INVALID",
+    code: pickOptionalString(record.code) ?? "SESSION_REVOKE_INVALID",
     message:
-      pickString(record.message, record.detail) ??
+      pickOptionalString(record.message, record.detail) ??
       "No fue posible revocar la sesión.",
   };
 }
@@ -488,9 +496,9 @@ function normalizeRefreshSessionResult(raw: unknown): RefreshSessionResult {
   return {
     ...(record as unknown as RefreshSessionResult),
     ok: pickBoolean(record.ok) ?? false,
-    code: pickString(record.code) ?? "SESSION_REFRESH_INVALID",
+    code: pickOptionalString(record.code) ?? "SESSION_REFRESH_INVALID",
     message:
-      pickString(record.message, record.detail) ??
+      pickOptionalString(record.message, record.detail) ??
       "No fue posible refrescar la sesión.",
   };
 }
