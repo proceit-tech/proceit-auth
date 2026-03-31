@@ -33,6 +33,10 @@ type CookieDefinition = CookieSecurityOptions &
     name: string;
   };
 
+/* =========================
+   VALIDADORES
+========================= */
+
 function requireNonEmptyString(
   value: string | null | undefined,
   errorCode: string
@@ -43,6 +47,39 @@ function requireNonEmptyString(
 
   return value.trim();
 }
+
+function requireReasonableToken(
+  value: string | null | undefined,
+  errorCode: string
+): string {
+  const normalized = requireNonEmptyString(value, errorCode);
+
+  /**
+   * Hardening:
+   * - evita header overflow
+   * - evita payload malicioso exagerado
+   */
+  if (normalized.length > 2048) {
+    throw new Error(`${errorCode}_TOO_LARGE`);
+  }
+
+  return normalized;
+}
+
+function requirePositiveInteger(
+  value: number,
+  errorCode: string
+): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(errorCode);
+  }
+
+  return value;
+}
+
+/* =========================
+   NORMALIZADORES
+========================= */
 
 function normalizeOptionalDomain(domain?: string | null): string | undefined {
   const normalizedDomain = domain?.trim();
@@ -77,16 +114,17 @@ function normalizeSameSite(
   return fallback;
 }
 
-function requirePositiveInteger(
-  value: number,
-  errorCode: string
-): number {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(errorCode);
-  }
+/* =========================
+   COOKIE STORE
+========================= */
 
-  return value;
+async function getCookieStore() {
+  return await cookies();
 }
+
+/* =========================
+   BUILDERS
+========================= */
 
 function buildCookieSecurityOptions(params: {
   kind: AuthCookieKind;
@@ -160,8 +198,12 @@ function buildExpiredCookieDefinition(
   };
 }
 
+/* =========================
+   LOW LEVEL OPERATIONS
+========================= */
+
 async function getCookieValueByName(name: string): Promise<string | null> {
-  const store = await cookies();
+  const store = await getCookieStore();
   return store.get(name)?.value ?? null;
 }
 
@@ -169,12 +211,12 @@ async function setCookieValue(
   definition: CookieDefinition,
   value: string
 ): Promise<void> {
-  const normalizedValue = requireNonEmptyString(
+  const normalizedValue = requireReasonableToken(
     value,
     `${definition.name.toUpperCase()}_VALUE_REQUIRED`
   );
 
-  const store = await cookies();
+  const store = await getCookieStore();
 
   store.set({
     ...definition,
@@ -183,8 +225,13 @@ async function setCookieValue(
 }
 
 async function clearCookieValue(definition: CookieDefinition): Promise<void> {
-  const store = await cookies();
+  const store = await getCookieStore();
 
+  /**
+   * IMPORTANTE:
+   * - domain/path devem ser idênticos ao cookie original
+   * - senão o browser não remove o cookie
+   */
   store.set({
     ...buildExpiredCookieDefinition(definition),
     value: "",
@@ -195,23 +242,12 @@ async function clearCookieValue(definition: CookieDefinition): Promise<void> {
    SESSION COOKIE
 ========================= */
 
-/**
- * Contrato oficial:
- * - o cookie de sessão transporta exclusivamente o `session_token` opaco;
- * - o valor esperado pelo runtime HTTP é o token emitido pelo login,
- *   nunca o UUID interno da sessão;
- * - nunca transportar user_id, tenant_id, roles, claims ou contexto serializado.
- *
- * Observação:
- * - o session_id continua existindo no banco e nos logs,
- *   mas não deve ser exposto como credencial de transporte no cliente.
- */
 export async function getSessionCookie(): Promise<string | null> {
   return getCookieValueByName(AUTH_COOKIE_NAME);
 }
 
 export async function setSessionCookie(sessionToken: string): Promise<void> {
-  const normalizedSessionToken = requireNonEmptyString(
+  const normalizedSessionToken = requireReasonableToken(
     sessionToken,
     "AUTH_SESSION_TOKEN_REQUIRED"
   );
@@ -230,18 +266,12 @@ export async function clearSessionCookie(): Promise<void> {
    REFRESH COOKIE
 ========================= */
 
-/**
- * Contrato oficial de refresh:
- * - o cookie de refresh transporta exclusivamente o refresh token opaco;
- * - nunca transportar user_id, tenant_id ou contexto derivado;
- * - o refresh existe apenas para rotação segura e renovação controlada de sessão.
- */
 export async function getRefreshCookie(): Promise<string | null> {
   return getCookieValueByName(AUTH_REFRESH_COOKIE_NAME);
 }
 
 export async function setRefreshCookie(refreshToken: string): Promise<void> {
-  const normalizedRefreshToken = requireNonEmptyString(
+  const normalizedRefreshToken = requireReasonableToken(
     refreshToken,
     "AUTH_REFRESH_TOKEN_REQUIRED"
   );
@@ -272,25 +302,22 @@ export async function setAuthCookies(params: {
   sessionToken: string;
   refreshToken?: string | null;
 }): Promise<void> {
-  const normalizedSessionToken = requireNonEmptyString(
+  const sessionToken = requireReasonableToken(
     params.sessionToken,
     "AUTH_SESSION_TOKEN_REQUIRED"
   );
 
-  await setSessionCookie(normalizedSessionToken);
+  const hasValidRefresh =
+    typeof params.refreshToken === "string" &&
+    params.refreshToken.trim().length > 0;
 
-  /**
-   * Regra de consistência:
-   * - se o chamador enviar refresh token válido, persistir;
-   * - se enviar null/undefined/vazio, limpar cookie legado/preexistente
-   *   para evitar estado híbrido entre sessão nova e refresh antigo.
-   */
-  if (typeof params.refreshToken === "string" && params.refreshToken.trim()) {
-    await setRefreshCookie(params.refreshToken);
-    return;
+  await setSessionCookie(sessionToken);
+
+  if (hasValidRefresh) {
+    await setRefreshCookie(params.refreshToken!);
+  } else {
+    await clearRefreshCookie();
   }
-
-  await clearRefreshCookie();
 }
 
 /* =========================
@@ -317,14 +344,6 @@ export function getRefreshCookieDefinition(): Readonly<CookieDefinition> {
    COMPATIBILIDADE TEMPORÁRIA
 ========================= */
 
-/**
- * Compatibilidade legada temporária.
- *
- * Observação:
- * - "session token" aqui já corresponde ao contrato oficial atual;
- * - manter estes aliases enquanto existirem imports antigos espalhados;
- * - remover quando a base inteira estiver saneada.
- */
 export async function getSessionTokenFromCookie(): Promise<string | null> {
   return getSessionCookie();
 }
@@ -340,17 +359,9 @@ export async function clearSessionTokenCookie(): Promise<void> {
 }
 
 /* =========================
-   COMPATIBILIDADE LEGADA ADICIONAL
+   COMPATIBILIDADE LEGADA
 ========================= */
 
-/**
- * Alias de transição para chamadas antigas que ainda usam `sessionId`
- * como nome de parâmetro no código TypeScript.
- *
- * Importante:
- * - semanticamente este valor já é `sessionToken`;
- * - manter apenas enquanto os pontos legados não forem saneados.
- */
 export async function setSessionIdCookie(
   sessionToken: string
 ): Promise<void> {

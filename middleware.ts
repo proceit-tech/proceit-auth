@@ -3,10 +3,14 @@ import { NextRequest, NextResponse } from "next/server";
 const AUTH_COOKIE_NAME =
   process.env.AUTH_COOKIE_NAME || "proceit_session";
 
+const ROOT_ROUTE = "/";
 const LOGIN_ROUTE = "/login";
 const DEFAULT_AUTHENTICATED_ROUTE = "/app";
 
-const PUBLIC_ROUTES = new Set<string>([LOGIN_ROUTE]);
+const PUBLIC_ROUTES = new Set<string>([
+  ROOT_ROUTE,
+  LOGIN_ROUTE,
+]);
 
 const PRIVATE_PREFIXES = [
   "/app",
@@ -14,14 +18,14 @@ const PRIVATE_PREFIXES = [
   "/access",
   "/account",
   "/security",
-  "/control-tower",
 ] as const;
 
 function isStaticAsset(pathname: string): boolean {
   return (
-    pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon") ||
-    pathname.includes(".")
+    pathname.startsWith("/_next/") ||
+    pathname === "/favicon.ico" ||
+    pathname.startsWith("/images/") ||
+    pathname.startsWith("/icons/")
   );
 }
 
@@ -61,9 +65,9 @@ function buildLoginRedirect(req: NextRequest): NextResponse {
   const returnTo = buildReturnToValue(req);
 
   /**
-   * Evita poluir a URL com retorno redundante para a própria rota de login.
+   * Evita poluir a URL com retorno redundante para rotas públicas.
    */
-  if (returnTo !== LOGIN_ROUTE) {
+  if (returnTo !== LOGIN_ROUTE && returnTo !== ROOT_ROUTE) {
     loginUrl.searchParams.set("return_to", returnTo);
   }
 
@@ -110,8 +114,8 @@ export function middleware(req: NextRequest) {
   }
 
   /**
-   * Se o usuário já possui cookie de sessão e tentar voltar
-   * para a rota pública de login, redirecionamos ao hub.
+   * Se o usuário já possui cookie de sessão e tentar acessar
+   * uma rota pública de entrada, redirecionamos ao hub protegido.
    *
    * O refinamento posterior entre /app e /select-tenant
    * continua sendo responsabilidade do runtime protegido.
@@ -120,9 +124,16 @@ export function middleware(req: NextRequest) {
     return buildAuthenticatedRedirect(req);
   }
 
+  /**
+   * Rotas neutras/desconhecidas:
+   * - mantém passagem normal;
+   * - a proteção real continua no runtime/server;
+   * - isso evita que o middleware invente regras excessivas
+   *   para caminhos ainda não catalogados.
+   */
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/((?!.*\\..*).*)"],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 };

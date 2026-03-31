@@ -5,18 +5,30 @@ import type {
 } from "@/lib/auth/types";
 
 type ControlTowerEventInput = {
-  event_code: string;
+  event_code?: string | null;
   event_type: string;
   severity?: AuthEventSeverity;
-  message?: string;
+  message?: string | null;
+
   user_id?: string | null;
   tenant_id?: string | null;
+
   route?: string | null;
   method?: string | null;
   ip_address?: string | null;
   user_agent?: string | null;
+
   metadata?: Record<string, unknown> | null;
   occurred_at?: string | Date | null;
+
+  product_code?: string | null;
+  module_code?: string | null;
+  status?: string | null;
+  source?: string | null;
+  title?: string | null;
+  fingerprint?: string | null;
+  trace_id?: string | null;
+  session_id?: string | null;
 };
 
 const HTTP_METHODS = new Set([
@@ -65,18 +77,6 @@ function normalizeMetadata(
   return value ?? {};
 }
 
-function safeSerializeMetadata(
-  value: Record<string, unknown> | null | undefined
-): string {
-  try {
-    return JSON.stringify(normalizeMetadata(value));
-  } catch {
-    return JSON.stringify({
-      serialization_error: true,
-    });
-  }
-}
-
 function isUuidLike(value: string | null | undefined): boolean {
   if (!value) {
     return false;
@@ -104,6 +104,7 @@ function isIpLike(value: string): boolean {
 
   const ipv4 =
     /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+
   const ipv6 =
     /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::1|::)$/;
 
@@ -150,50 +151,224 @@ function normalizeOccurredAt(
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function inferProductCode(input: ControlTowerEventInput): string {
+  return normalizeOptionalString(input.product_code) ?? "auth";
+}
+
+function inferModuleCode(input: ControlTowerEventInput): string {
+  return normalizeOptionalString(input.module_code) ?? "identity";
+}
+
+function inferSource(input: ControlTowerEventInput): string {
+  const explicitSource = normalizeOptionalString(input.source);
+
+  if (explicitSource) {
+    return explicitSource;
+  }
+
+  const method = normalizeHttpMethod(input.method);
+  const route = normalizeOptionalString(input.route);
+
+  if (method && route) {
+    return `api:${method} ${route}`;
+  }
+
+  if (route) {
+    return `api:${route}`;
+  }
+
+  return "runtime:node";
+}
+
+function inferTitle(input: ControlTowerEventInput): string {
+  return (
+    normalizeOptionalString(input.title) ??
+    normalizeOptionalString(input.event_code) ??
+    input.event_type
+  );
+}
+
+function inferFingerprint(input: ControlTowerEventInput): string | null {
+  const explicitFingerprint = normalizeOptionalString(input.fingerprint);
+
+  if (explicitFingerprint) {
+    return explicitFingerprint;
+  }
+
+  const eventCode = normalizeOptionalString(input.event_code);
+  const route = normalizeOptionalString(input.route);
+
+  if (eventCode && route) {
+    return `${eventCode}:${route}`;
+  }
+
+  return eventCode ?? input.event_type;
+}
+
+function inferStatus(input: {
+  explicitStatus?: string | null;
+  severity: AuthEventSeverity;
+  eventCode?: string | null;
+  eventType: string;
+}): string {
+  const explicit = normalizeOptionalString(input.explicitStatus);
+
+  if (explicit) {
+    return explicit;
+  }
+
+  const code = (input.eventCode ?? "").toLowerCase();
+  const type = input.eventType.toLowerCase();
+
+  if (
+    code.includes(".success") ||
+    code.includes("_success") ||
+    type.includes("success")
+  ) {
+    return "success";
+  }
+
+  if (
+    code.includes(".failed") ||
+    code.includes("_failed") ||
+    type.includes("failed")
+  ) {
+    return "failed";
+  }
+
+  if (
+    code.includes(".error") ||
+    code.includes("_error") ||
+    type.includes("error")
+  ) {
+    return "error";
+  }
+
+  if (input.severity === "warning") {
+    return "warning";
+  }
+
+  if (input.severity === "error" || input.severity === "critical") {
+    return "error";
+  }
+
+  return "success";
+}
+
+function extractMetadataSessionId(
+  metadata: Record<string, unknown>
+): string | null {
+  const value = metadata.session_id;
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  return isUuidLike(value) ? value : null;
+}
+
+function extractTraceId(
+  input: ControlTowerEventInput,
+  metadata: Record<string, unknown>
+): string | null {
+  const explicitTraceId = normalizeOptionalString(input.trace_id);
+
+  if (explicitTraceId) {
+    return explicitTraceId;
+  }
+
+  const metadataTraceId = metadata.trace_id;
+  if (typeof metadataTraceId === "string") {
+    const normalized = normalizeOptionalString(metadataTraceId);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  const metadataRequestId = metadata.request_id;
+  if (typeof metadataRequestId === "string") {
+    const normalized = normalizeOptionalString(metadataRequestId);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function buildPayload(
+  input: ControlTowerEventInput
+): Record<string, unknown> {
+  const metadata = normalizeMetadata(input.metadata);
+
+  return {
+    event_code: normalizeOptionalString(input.event_code),
+    route: normalizeOptionalString(input.route),
+    method: normalizeHttpMethod(input.method),
+    ip_address: normalizeOptionalIp(input.ip_address),
+    user_agent: normalizeOptionalString(input.user_agent),
+    metadata,
+  };
+}
+
 export async function logControlTowerEvent(
   input: ControlTowerEventInput
 ): Promise<void> {
   try {
-    const eventCode = requireNonEmptyString(
-      input.event_code,
-      "CONTROL_TOWER_EVENT_CODE_REQUIRED"
-    );
-
     const eventType = requireNonEmptyString(
       input.event_type,
       "CONTROL_TOWER_EVENT_TYPE_REQUIRED"
     );
 
+    const eventCode = normalizeOptionalString(input.event_code);
+    const severity = normalizeSeverity(input.severity);
     const occurredAt = normalizeOccurredAt(input.occurred_at);
+    const metadata = normalizeMetadata(input.metadata);
+    const payload = buildPayload(input);
+
+    const sessionId =
+      normalizeOptionalUuid(input.session_id) ??
+      extractMetadataSessionId(metadata);
 
     await db`
       insert into control_tower.events (
-        event_code,
+        tenant_id,
+        user_id,
+        product_code,
+        module_code,
         event_type,
         severity,
+        status,
+        source,
+        title,
         message,
-        user_id,
-        tenant_id,
-        route,
-        method,
-        ip_address,
-        user_agent,
-        metadata,
-        occurred_at,
+        fingerprint,
+        trace_id,
+        session_id,
+        payload,
+        event_at,
         created_at
       )
       values (
-        ${eventCode},
-        ${eventType},
-        ${normalizeSeverity(input.severity)},
-        ${normalizeOptionalString(input.message)},
-        ${normalizeOptionalUuid(input.user_id)}::uuid,
         ${normalizeOptionalUuid(input.tenant_id)}::uuid,
-        ${normalizeOptionalString(input.route)},
-        ${normalizeHttpMethod(input.method)},
-        ${normalizeOptionalIp(input.ip_address)}::inet,
-        ${normalizeOptionalString(input.user_agent)},
-        ${safeSerializeMetadata(input.metadata)}::jsonb,
+        ${normalizeOptionalUuid(input.user_id)}::uuid,
+        ${inferProductCode(input)},
+        ${inferModuleCode(input)},
+        ${eventType},
+        ${severity},
+        ${inferStatus({
+          explicitStatus: input.status,
+          severity,
+          eventCode,
+          eventType,
+        })},
+        ${inferSource(input)},
+        ${inferTitle(input)},
+        ${normalizeOptionalString(input.message)},
+        ${inferFingerprint(input)},
+        ${extractTraceId(input, metadata)},
+        ${sessionId}::uuid,
+        ${JSON.stringify(payload)}::jsonb,
         ${occurredAt ?? new Date()},
         now()
       )
@@ -222,8 +397,16 @@ export async function logControlTowerEvent(
 }
 
 export async function logAuthEvent(input: AuthEventInput): Promise<void> {
+  const metadata = normalizeMetadata(input.metadata);
+
   await logControlTowerEvent({
     ...input,
     severity: input.severity ?? "info",
+    product_code: "auth",
+    module_code: "identity",
+    session_id:
+      typeof metadata.session_id === "string"
+        ? metadata.session_id
+        : null,
   });
 }

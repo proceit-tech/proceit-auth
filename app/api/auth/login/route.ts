@@ -40,6 +40,20 @@ type AuthenticateByDocumentResult = Awaited<
   ReturnType<typeof authenticateByDocument>
 >;
 
+function requireValidSessionToken(sessionToken: string): string {
+  if (typeof sessionToken !== "string" || sessionToken.trim().length === 0) {
+    throw new Error("AUTH_SESSION_TOKEN_INVALID");
+  }
+
+  const normalized = sessionToken.trim();
+
+  if (normalized.length > 2048) {
+    throw new Error("AUTH_SESSION_TOKEN_TOO_LARGE");
+  }
+
+  return normalized;
+}
+
 function getClientIp(req: NextRequest): string | null {
   const forwardedFor = req.headers.get("x-forwarded-for");
 
@@ -201,7 +215,9 @@ async function applySuccessfulLoginCookie(
   response: NextResponse,
   sessionToken: string
 ): Promise<NextResponse> {
-  await setSessionCookie(sessionToken);
+  const validatedSessionToken = requireValidSessionToken(sessionToken);
+
+  await setSessionCookie(validatedSessionToken);
 
   /**
    * A rota devolve o response normal ao cliente.
@@ -224,6 +240,7 @@ function isAuthenticatedWithoutSessionToken(
 }
 
 export async function POST(req: NextRequest) {
+  const traceId = crypto.randomUUID();
   const ipAddress = getClientIp(req);
   const userAgent = req.headers.get("user-agent");
   const consumer = getConsumerMetadata(req);
@@ -243,6 +260,7 @@ export async function POST(req: NextRequest) {
         user_agent: userAgent,
         route: AUTH_LOGIN_ROUTE,
         method: AUTH_LOGIN_METHOD,
+        trace_id: traceId,
         metadata: {
           consumer,
         },
@@ -266,6 +284,7 @@ export async function POST(req: NextRequest) {
         user_agent: userAgent,
         route: AUTH_LOGIN_ROUTE,
         method: AUTH_LOGIN_METHOD,
+        trace_id: traceId,
         metadata: {
           validation_issues: parsed.error.flatten(),
           consumer,
@@ -289,6 +308,7 @@ export async function POST(req: NextRequest) {
         user_agent: userAgent,
         route: AUTH_LOGIN_ROUTE,
         method: AUTH_LOGIN_METHOD,
+        trace_id: traceId,
         metadata: {
           original_document: originalDocument,
           normalized_document: documentNormalized,
@@ -317,6 +337,7 @@ export async function POST(req: NextRequest) {
         user_agent: userAgent,
         route: AUTH_LOGIN_ROUTE,
         method: AUTH_LOGIN_METHOD,
+        trace_id: traceId,
         metadata: {
           original_document: originalDocument,
           normalized_document: documentNormalized,
@@ -351,6 +372,7 @@ export async function POST(req: NextRequest) {
         user_agent: userAgent,
         route: AUTH_LOGIN_ROUTE,
         method: AUTH_LOGIN_METHOD,
+        trace_id: traceId,
         metadata: {
           original_document: originalDocument,
           normalized_document: documentNormalized,
@@ -402,6 +424,7 @@ export async function POST(req: NextRequest) {
       user_agent: userAgent,
       route: AUTH_LOGIN_ROUTE,
       method: AUTH_LOGIN_METHOD,
+      trace_id: traceId,
       metadata: {
         original_document: originalDocument,
         normalized_document: documentNormalized,
@@ -434,6 +457,7 @@ export async function POST(req: NextRequest) {
       user_agent: userAgent,
       route: AUTH_LOGIN_ROUTE,
       method: AUTH_LOGIN_METHOD,
+      trace_id: traceId,
       metadata: {
         error:
           error instanceof Error

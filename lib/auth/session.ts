@@ -117,11 +117,11 @@ function requireNonEmptyString(
   value: string | null | undefined,
   errorCode: string
 ): string {
-  if (typeof value !== "string" || value.length === 0) {
+  if (typeof value !== "string" || value.trim().length === 0) {
     throw new Error(errorCode);
   }
 
-  return value;
+  return value.trim();
 }
 
 function requireNonEmptyTrimmedString(
@@ -382,6 +382,18 @@ function normalizeLoginResult(raw: unknown): LoginResult {
     };
   }
 
+  const sessionToken = pickOptionalString(
+    root.session_token,
+    root.sessionToken,
+    contextSession?.session_token,
+    contextSession?.token,
+    context?.session_token
+  );
+
+  if (!sessionToken) {
+    return LOGIN_RESULT_FAILED;
+  }
+
   return {
     ...(root as unknown as LoginResult),
     ok: true,
@@ -396,13 +408,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
       contextSession?.session_id,
       context?.session_id
     ),
-    session_token: pickOptionalString(
-      root.session_token,
-      root.sessionToken,
-      contextSession?.session_token,
-      contextSession?.token,
-      context?.session_token
-    ),
+    session_token: sessionToken,
     refresh_token: pickOptionalString(
       root.refresh_token,
       root.refreshToken,
@@ -474,6 +480,10 @@ function normalizeAuthContext(raw: unknown): AuthContext {
         pickOptionalString(record.message, record.detail) ??
         "No fue posible obtener el contexto de la sesión.",
     };
+  }
+
+  if (!record.session || !record.user) {
+    return SESSION_CONTEXT_FAILED;
   }
 
   return {
@@ -553,11 +563,12 @@ async function runSingleResultFunction<TRaw, TNormalized>(params: {
 }): Promise<TNormalized> {
   try {
     const rows = (await params.queryFactory()) as SqlFunctionResultRow<TRaw>[];
-    const rawResult = rows[0]?.result ?? null;
 
-    if (rawResult === null) {
+    if (!Array.isArray(rows) || rows.length === 0) {
       return params.emptyFallback;
     }
+
+    const rawResult = rows[0]?.result ?? null;
 
     return params.normalize(rawResult);
   } catch (error) {

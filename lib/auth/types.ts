@@ -58,33 +58,20 @@ export type SessionMembership = {
 export type SessionRecord = {
   /**
    * UUID estrutural da sessão persistida.
-   * Este é o identificador interno oficial da sessão no banco.
-   * Não é o valor principal transportado no cookie no runtime atual.
    */
   id: Uuid;
 
   user_id: Uuid;
 
-  /**
-   * Tenant ativo no contexto atual da sessão.
-   * Campo de runtime/sessão, não substitui memberships.
-   */
   active_tenant_id: Uuid | null;
 
-  /**
-   * Membership ativa/principal no momento da sessão, quando aplicável.
-   * Não substitui a lista de memberships do usuário.
-   */
   membership_id?: Uuid | null;
 
-  /**
-   * Role principal associada ao contexto ativo da sessão.
-   * Não é a fonte única de autorização.
-   */
   role_code?: string | null;
 
   session_status?: SessionStatus | null;
   permissions_version?: number | null;
+
   expires_at: IsoDateTimeString | null;
   issued_at?: IsoDateTimeString | null;
   last_seen_at: IsoDateTimeString | null;
@@ -121,50 +108,21 @@ export type LoginResult = {
   code: string;
   message?: string;
 
-  /**
-   * UUID estrutural interno da sessão.
-   * Mantido para logs, contexto SQL, observabilidade e compatibilidade.
-   */
   session_id?: Uuid;
 
-  /**
-   * Contrato oficial atual do transporte HTTP:
-   * - session_token é o valor transportado no cookie httpOnly;
-   * - é um identificador opaco, não um UUID estrutural;
-   * - o backend resolve o contexto real a partir dele.
-   */
   session_token?: string | null;
-
-  /**
-   * Refresh token opaco para rotação controlada de sessão.
-   */
   refresh_token?: string | null;
 
-  /**
-   * Expiração principal da sessão autenticada.
-   */
   expires_at?: IsoDateTimeString | null;
-
-  /**
-   * Expiração do refresh token, quando retornada pelo fluxo de login.
-   */
   refresh_expires_at?: IsoDateTimeString | null;
 
   requires_tenant_selection?: boolean;
 
-  /**
-   * Campo espelhado de conveniência.
-   * Não substitui `session.active_tenant_id` quando houver `session`.
-   */
   active_tenant_id?: Uuid | null;
 
   membership_id?: Uuid | null;
   role_code?: string | null;
 
-  /**
-   * Alguns fluxos devolvem a sessão resumida em `session`,
-   * além dos campos espelhados de topo.
-   */
   session?: SessionRecord | null;
 
   user?: SessionUser | null;
@@ -177,24 +135,14 @@ export type RefreshSessionResult = {
   code: string;
   message?: string;
 
-  /**
-   * A sessão continua sendo referenciada internamente por SessionRecord.
-   */
   session?: SessionRecord;
 
   user?: SessionUser;
   memberships?: SessionMembership[];
   requires_tenant_selection?: boolean;
 
-  /**
-   * Campo espelhado de conveniência.
-   * A fonte primária continua sendo `session.active_tenant_id`.
-   */
   active_tenant_id?: Uuid | null;
 
-  /**
-   * Alguns fluxos de refresh podem rotacionar tokens.
-   */
   session_token?: string | null;
   refresh_token?: string | null;
   refresh_expires_at?: IsoDateTimeString | null;
@@ -212,16 +160,42 @@ export type AuthEventSeverity =
   | "error"
   | "critical";
 
+/**
+ * 🔥 NOVO CONTRATO — ALINHADO AO CONTROL TOWER
+ */
 export type AuthEventInput = {
+  // Identidade do evento
   event_code: string;
   event_type: string;
+
+  // Severidade e status
   severity?: AuthEventSeverity;
+  status?: "success" | "failed" | "error" | "warning" | "pending";
+
+  // Mensagem
   message?: string;
+
+  // Identidade
   user_id?: Uuid | null;
   tenant_id?: Uuid | null;
+  session_id?: Uuid | null;
+
+  // Origem
   route?: string | null;
   method?: string | null;
-  ip_address?: string | null;
-  user_agent?: string | null;
+  source?: string | null;
+
+  // Observabilidade
+  trace_id?: string | null;
+  fingerprint?: string | null;
+
+  // Domínio
+  product_code?: string | null;
+  module_code?: string | null;
+
+  // Apresentação
+  title?: string | null;
+
+  // Payload adicional
   metadata?: Record<string, unknown> | null;
 };
