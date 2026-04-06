@@ -241,10 +241,6 @@ async function applySuccessfulLoginCookie(
 
   await setSessionCookie(validatedSessionToken);
 
-  /**
-   * A rota devolve o response normal ao cliente.
-   * O cookie é persistido via cookies() no runtime server-side.
-   */
   return response;
 }
 
@@ -444,7 +440,7 @@ export async function POST(req: NextRequest) {
     }
 
     const validatedSessionToken = requireValidSessionToken(
-      authResult.session_token
+      authResult.session_token as string
     );
 
     const flow = buildLoginSuccessFlow({

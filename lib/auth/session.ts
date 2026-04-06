@@ -478,17 +478,12 @@ function normalizeLoginResult(raw: unknown): LoginResult {
     };
   }
 
-  /**
-   * Regra crítica:
-   * - se o SQL autenticou, mas não retornou session_token,
-   *   isso NÃO é "credencial inválida";
-   * - isso é erro de contrato de sessão entre SQL e runtime Node.
-   */
   if (!resolvedSessionToken) {
     return {
       ok: false,
       code: "AUTH_SESSION_TOKEN_MISSING",
-      message: "Autenticación válida, pero no se recibió session_token.",
+      message:
+        "Autenticación válida, pero no se recibió session_token.",
       session_id: resolvedSessionId,
       refresh_token: resolvedRefreshToken,
       expires_at: resolvedExpiresAt,
@@ -666,15 +661,6 @@ async function runSingleResultFunction<TRaw, TNormalized>(params: {
    AUTH CORE FUNCTIONS
 ========================= */
 
-/**
- * LOGIN POR DOCUMENTO
- *
- * Fluxo oficial atual:
- * - core_identity.login_with_document(...)
- * - cria sessão real
- * - gera session_token / refresh_token
- * - retorna contexto unificado
- */
 export async function authenticateByDocument(params: {
   document: string;
   password: string;
@@ -710,16 +696,6 @@ export async function authenticateByDocument(params: {
   });
 }
 
-/**
- * CONTEXTO OFICIAL DE SESSÃO
- *
- * Aceita:
- * - session_id (uuid)
- * - session_token (texto)
- *
- * Isso é importante porque o cookie atual tende a carregar
- * session_token, não session_id interno.
- */
 export async function getSessionContext(
   sessionIdentifier: string
 ): Promise<AuthContext> {
@@ -748,12 +724,6 @@ export async function getSessionContext(
   });
 }
 
-/**
- * SELEÇÃO DE TENANT NA SESSÃO OFICIAL
- *
- * Mantido por session_id (uuid), porque a função SQL atual
- * de seleção de tenant opera sobre a sessão persistida.
- */
 export async function selectTenantForSession(params: {
   sessionIdentifier: string;
   tenantId: string;
@@ -777,14 +747,6 @@ export async function selectTenantForSession(params: {
   });
 }
 
-/**
- * REVOGAÇÃO DIRETA DE SESSÃO
- *
- * Uso recomendado:
- * - ação administrativa
- * - invalidação técnica
- * - resposta a incidente
- */
 export async function revokeSession(params: {
   sessionIdentifier: string;
   reason?: string;
@@ -808,12 +770,6 @@ export async function revokeSession(params: {
   });
 }
 
-/**
- * LOGOUT
- *
- * Wrapper semântico para encerramento da sessão atual
- * iniciado pelo próprio usuário.
- */
 export async function logoutSession(params: {
   sessionIdentifier: string;
   reason?: string;
@@ -837,9 +793,6 @@ export async function logoutSession(params: {
   });
 }
 
-/**
- * REFRESH REAL DE SESSÃO COM ROTAÇÃO DE REFRESH TOKEN
- */
 export async function refreshSessionWithToken(params: {
   sessionIdentifier: string;
   refreshToken: string;
@@ -867,19 +820,6 @@ export async function refreshSessionWithToken(params: {
    SESSION CONTROL EXPANDIDO
 ========================= */
 
-/**
- * Revoga TODAS as sessões ativas de um usuário.
- *
- * Observação:
- * - mantém o padrão atual da arquitetura;
- * - usa update direto na tabela oficial;
- * - não apaga histórico;
- * - preserva compatibilidade com o runtime atual.
- *
- * Débito arquitetural:
- * - idealmente migrar para função SQL oficial dedicada,
- *   para unificar auditoria, regras e efeitos colaterais.
- */
 export async function revokeAllSessionsForUser(params: {
   userId: string;
   reason?: string;
@@ -888,7 +828,7 @@ export async function revokeAllSessionsForUser(params: {
   const reason = resolveReason(params.reason, "user_logout_all");
 
   try {
-    const rows = await db<{ affected_sessions: number }>`
+    const rows = await db<{ affected_sessions: number }[]>`
       with updated as (
         update core_identity.sessions
         set
@@ -918,17 +858,6 @@ export async function revokeAllSessionsForUser(params: {
   }
 }
 
-/**
- * Revoga todas as sessões ativas pertencentes a um tenant.
- *
- * Útil para:
- * - isolamento operacional
- * - resposta a incidente
- * - corte administrativo por tenant
- *
- * Débito arquitetural:
- * - idealmente migrar para função SQL oficial dedicada.
- */
 export async function revokeSessionsByTenant(params: {
   tenantId: string;
   reason?: string;
@@ -937,7 +866,7 @@ export async function revokeSessionsByTenant(params: {
   const reason = resolveReason(params.reason, "tenant_forced_logout");
 
   try {
-    const rows = await db<{ affected_sessions: number }>`
+    const rows = await db<{ affected_sessions: number }[]>`
       with updated as (
         update core_identity.sessions
         set
@@ -967,9 +896,6 @@ export async function revokeSessionsByTenant(params: {
   }
 }
 
-/**
- * Wrapper semântico para revogação administrativa de sessão individual.
- */
 export async function revokeSessionByAdmin(params: {
   sessionIdentifier: string;
   reason?: string;
@@ -980,9 +906,6 @@ export async function revokeSessionByAdmin(params: {
   });
 }
 
-/**
- * Wrapper semântico para "logout all" iniciado pelo próprio usuário.
- */
 export async function logoutAllSessionsForUser(params: {
   userId: string;
   reason?: string;

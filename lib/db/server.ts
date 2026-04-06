@@ -170,13 +170,6 @@ function createSqlClient(): DbSqlClient {
     idle_timeout: Math.floor(DB_IDLE_TIMEOUT_MILLISECONDS / 1000),
     connect_timeout: Math.floor(DB_CONNECTION_TIMEOUT_MILLISECONDS / 1000),
 
-    /**
-     * Importante para compatibilidade com Supabase + pooler.
-     *
-     * Prepared statements podem gerar comportamento inconsistente
-     * em chamadas de função, casts e reuso de conexão em ambiente
-     * gerenciado / transaction pooler.
-     */
     prepare: false,
 
     transform: {
@@ -263,7 +256,7 @@ export async function checkDatabaseHealth(): Promise<DatabaseHealthResult> {
 
 export async function getDatabaseRuntimeFingerprint(): Promise<DatabaseRuntimeFingerprintResult> {
   try {
-    const rows = await db<DatabaseRuntimeFingerprintRow>`
+    const rows = await db<DatabaseRuntimeFingerprintRow[]>`
       select
         current_database() as database,
         current_user as current_user,
