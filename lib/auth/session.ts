@@ -372,17 +372,22 @@ function normalizeLoginResult(raw: unknown): LoginResult {
   const contextSession = pickRecord(context?.session);
   const contextUser = pickRecord(context?.user);
 
-  if (!ok) {
-    return {
-      ok: false,
-      code: pickOptionalString(root.code) ?? "LOGIN_RESULT_INVALID",
-      message:
-        pickOptionalString(root.message, root.detail) ??
-        "No fue posible autenticar la sesión.",
-    };
-  }
+  const resolvedCode =
+    pickOptionalString(root.code) ?? "LOGIN_RESULT_INVALID";
 
-  const sessionToken = pickOptionalString(
+  const resolvedMessage =
+    pickOptionalString(root.message, root.detail) ??
+    "No fue posible autenticar la sesión.";
+
+  const resolvedSessionId = pickOptionalString(
+    root.session_id,
+    root.sessionId,
+    contextSession?.id,
+    contextSession?.session_id,
+    context?.session_id
+  );
+
+  const resolvedSessionToken = pickOptionalString(
     root.session_token,
     root.sessionToken,
     contextSession?.session_token,
@@ -390,8 +395,110 @@ function normalizeLoginResult(raw: unknown): LoginResult {
     context?.session_token
   );
 
-  if (!sessionToken) {
-    return LOGIN_RESULT_FAILED;
+  const resolvedRefreshToken = pickOptionalString(
+    root.refresh_token,
+    root.refreshToken,
+    contextSession?.refresh_token,
+    context?.refresh_token
+  );
+
+  const resolvedExpiresAt = pickOptionalString(
+    root.expires_at,
+    root.expiresAt,
+    contextSession?.expires_at,
+    context?.expires_at
+  );
+
+  const resolvedRefreshExpiresAt = pickOptionalString(
+    root.refresh_expires_at,
+    root.refreshExpiresAt,
+    contextSession?.refresh_expires_at,
+    context?.refresh_expires_at
+  );
+
+  const resolvedActiveTenantId = pickOptionalString(
+    root.active_tenant_id,
+    root.activeTenantId,
+    contextSession?.active_tenant_id,
+    context?.active_tenant_id
+  );
+
+  const resolvedMembershipId = pickOptionalString(
+    root.membership_id,
+    root.membershipId,
+    contextSession?.membership_id,
+    context?.membership_id
+  );
+
+  const resolvedRoleCode = pickOptionalString(
+    root.role_code,
+    root.roleCode,
+    contextSession?.role_code,
+    context?.role_code
+  );
+
+  const resolvedRequiresTenantSelection =
+    pickBoolean(
+      root.requires_tenant_selection,
+      root.requiresTenantSelection,
+      context?.requires_tenant_selection
+    ) ?? false;
+
+  const resolvedUser =
+    (pickRecord(root.user, contextUser) as LoginResult["user"]) ?? undefined;
+
+  const resolvedMemberships =
+    (pickArray(
+      root.memberships,
+      context?.memberships
+    ) as LoginResult["memberships"]) ?? [];
+
+  const resolvedContext = (context as LoginResult["context"]) ?? undefined;
+
+  if (!ok) {
+    return {
+      ok: false,
+      code: resolvedCode,
+      message: resolvedMessage,
+      session_id: resolvedSessionId,
+      session_token: resolvedSessionToken,
+      refresh_token: resolvedRefreshToken,
+      expires_at: resolvedExpiresAt,
+      refresh_expires_at: resolvedRefreshExpiresAt,
+      active_tenant_id: resolvedActiveTenantId,
+      membership_id: resolvedMembershipId,
+      role_code: resolvedRoleCode,
+      requires_tenant_selection: resolvedRequiresTenantSelection,
+      user: resolvedUser,
+      memberships: resolvedMemberships,
+      context: resolvedContext,
+    };
+  }
+
+  /**
+   * Regra crítica:
+   * - se o SQL autenticou, mas não retornou session_token,
+   *   isso NÃO é "credencial inválida";
+   * - isso é erro de contrato de sessão entre SQL e runtime Node.
+   */
+  if (!resolvedSessionToken) {
+    return {
+      ok: false,
+      code: "AUTH_SESSION_TOKEN_MISSING",
+      message:
+        "Autenticación válida, pero no se recibió session_token.",
+      session_id: resolvedSessionId,
+      refresh_token: resolvedRefreshToken,
+      expires_at: resolvedExpiresAt,
+      refresh_expires_at: resolvedRefreshExpiresAt,
+      active_tenant_id: resolvedActiveTenantId,
+      membership_id: resolvedMembershipId,
+      role_code: resolvedRoleCode,
+      requires_tenant_selection: resolvedRequiresTenantSelection,
+      user: resolvedUser,
+      memberships: resolvedMemberships,
+      context: resolvedContext,
+    };
   }
 
   return {
@@ -401,65 +508,18 @@ function normalizeLoginResult(raw: unknown): LoginResult {
     message:
       pickOptionalString(root.message, root.detail) ??
       "Sesión autenticada correctamente.",
-    session_id: pickOptionalString(
-      root.session_id,
-      root.sessionId,
-      contextSession?.id,
-      contextSession?.session_id,
-      context?.session_id
-    ),
-    session_token: sessionToken,
-    refresh_token: pickOptionalString(
-      root.refresh_token,
-      root.refreshToken,
-      contextSession?.refresh_token,
-      context?.refresh_token
-    ),
-    expires_at: pickOptionalString(
-      root.expires_at,
-      root.expiresAt,
-      contextSession?.expires_at,
-      context?.expires_at
-    ),
-    refresh_expires_at: pickOptionalString(
-      root.refresh_expires_at,
-      root.refreshExpiresAt,
-      contextSession?.refresh_expires_at,
-      context?.refresh_expires_at
-    ),
-    active_tenant_id: pickOptionalString(
-      root.active_tenant_id,
-      root.activeTenantId,
-      contextSession?.active_tenant_id,
-      context?.active_tenant_id
-    ),
-    membership_id: pickOptionalString(
-      root.membership_id,
-      root.membershipId,
-      contextSession?.membership_id,
-      context?.membership_id
-    ),
-    role_code: pickOptionalString(
-      root.role_code,
-      root.roleCode,
-      contextSession?.role_code,
-      context?.role_code
-    ),
-    requires_tenant_selection:
-      pickBoolean(
-        root.requires_tenant_selection,
-        root.requiresTenantSelection,
-        context?.requires_tenant_selection
-      ) ?? false,
-    user:
-      (pickRecord(root.user, contextUser) as LoginResult["user"]) ??
-      undefined,
-    memberships:
-      (pickArray(
-        root.memberships,
-        context?.memberships
-      ) as LoginResult["memberships"]) ?? [],
-    context: (context as LoginResult["context"]) ?? undefined,
+    session_id: resolvedSessionId,
+    session_token: resolvedSessionToken,
+    refresh_token: resolvedRefreshToken,
+    expires_at: resolvedExpiresAt,
+    refresh_expires_at: resolvedRefreshExpiresAt,
+    active_tenant_id: resolvedActiveTenantId,
+    membership_id: resolvedMembershipId,
+    role_code: resolvedRoleCode,
+    requires_tenant_selection: resolvedRequiresTenantSelection,
+    user: resolvedUser,
+    memberships: resolvedMemberships,
+    context: resolvedContext,
   } as LoginResult;
 }
 

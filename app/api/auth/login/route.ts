@@ -105,65 +105,84 @@ function buildLoginSuccessFlow(params: {
   };
 }
 
-function buildInvalidPayloadResponse(details: unknown) {
+function buildInvalidPayloadResponse(params: {
+  traceId: string;
+  details: unknown;
+}) {
   return NextResponse.json(
     {
       ok: false,
       code: "INVALID_PAYLOAD",
       message: "Datos de acceso inválidos.",
-      errors: details,
+      trace_id: params.traceId,
+      details: params.details,
     },
     { status: 400 }
   );
 }
 
-function buildInvalidDocumentResponse() {
+function buildInvalidDocumentResponse(traceId: string) {
   return NextResponse.json(
     {
       ok: false,
       code: "INVALID_DOCUMENT",
       message: "Documento inválido.",
+      trace_id: traceId,
+      details: null,
     },
     { status: 400 }
   );
 }
 
 function buildUnauthorizedResponse(params: {
+  traceId: string;
   code?: string;
   message?: string;
+  details?: Record<string, unknown> | null;
 }) {
   return NextResponse.json(
     {
       ok: false,
       code: params.code || "INVALID_CREDENTIALS",
       message: params.message || "Documento o contraseña inválidos.",
+      trace_id: params.traceId,
+      details: params.details ?? null,
     },
     { status: 401 }
   );
 }
 
-function buildSessionContractErrorResponse(params?: {
+function buildSessionContractErrorResponse(params: {
+  traceId: string;
   code?: string;
   message?: string;
+  details?: Record<string, unknown> | null;
 }) {
   return NextResponse.json(
     {
       ok: false,
-      code: params?.code || "LOGIN_SESSION_CONTRACT_ERROR",
+      code: params.code || "LOGIN_SESSION_CONTRACT_ERROR",
       message:
-        params?.message ||
+        params.message ||
         "La autenticación fue validada, pero no se pudo establecer la sesión.",
+      trace_id: params.traceId,
+      details: params.details ?? null,
     },
     { status: 500 }
   );
 }
 
-function buildInternalErrorResponse() {
+function buildInternalErrorResponse(params: {
+  traceId: string;
+  details?: Record<string, unknown> | null;
+}) {
   return NextResponse.json(
     {
       ok: false,
       code: "LOGIN_ERROR",
       message: "No fue posible iniciar sesión.",
+      trace_id: params.traceId,
+      details: params.details ?? null,
     },
     { status: 500 }
   );
@@ -172,8 +191,9 @@ function buildInternalErrorResponse() {
 function buildSuccessResponse(params: {
   authResult: AuthenticateByDocumentResult;
   flow: ReturnType<typeof buildLoginSuccessFlow>;
+  traceId: string;
 }) {
-  const { authResult, flow } = params;
+  const { authResult, flow, traceId } = params;
 
   return NextResponse.json(
     {
@@ -183,6 +203,7 @@ function buildSuccessResponse(params: {
         flow.next_step === "tenant_selection_required"
           ? "Sesión iniciada. Seleccione el tenant operativo."
           : "Sesión iniciada correctamente.",
+      trace_id: traceId,
       session_established: true,
       next_step: flow.next_step,
       next_path: flow.next_path,
@@ -206,6 +227,7 @@ function buildSuccessResponse(params: {
         document_number: authResult.user?.document_number ?? null,
       },
       memberships: authResult.memberships ?? [],
+      details: null,
     },
     { status: 200 }
   );
@@ -267,8 +289,11 @@ export async function POST(req: NextRequest) {
       });
 
       return buildInvalidPayloadResponse({
-        formErrors: ["JSON inválido"],
-        fieldErrors: {},
+        traceId,
+        details: {
+          formErrors: ["JSON inválido"],
+          fieldErrors: {},
+        },
       });
     }
 
@@ -291,7 +316,10 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return buildInvalidPayloadResponse(parsed.error.flatten());
+      return buildInvalidPayloadResponse({
+        traceId,
+        details: parsed.error.flatten(),
+      });
     }
 
     const originalDocument = parsed.data.document;
@@ -316,7 +344,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      return buildInvalidDocumentResponse();
+      return buildInvalidDocumentResponse(traceId);
     }
 
     const authResult = await authenticateByDocument({
@@ -351,9 +379,15 @@ export async function POST(req: NextRequest) {
       });
 
       const response = buildUnauthorizedResponse({
+        traceId,
         code: authResult.code || "INVALID_CREDENTIALS",
         message:
           authResult.message || "Documento o contraseña inválidos.",
+        details: {
+          requires_tenant_selection:
+            authResult.requires_tenant_selection ?? false,
+          session_id: authResult.session_id ?? null,
+        },
       });
 
       return applyFailedLoginCleanup(response);
@@ -392,9 +426,18 @@ export async function POST(req: NextRequest) {
       });
 
       const response = buildSessionContractErrorResponse({
+        traceId,
         code: "LOGIN_SESSION_TOKEN_MISSING",
         message:
           "La autenticación fue validada, pero no se recibió un session_token válido.",
+        details: {
+          session_id: authResult.session_id ?? null,
+          active_tenant_id: authResult.active_tenant_id ?? null,
+          membership_id: authResult.membership_id ?? null,
+          role_code: authResult.role_code ?? null,
+          requires_tenant_selection:
+            authResult.requires_tenant_selection ?? false,
+        },
       });
 
       return applyFailedLoginCleanup(response);
@@ -409,6 +452,7 @@ export async function POST(req: NextRequest) {
     const response = buildSuccessResponse({
       authResult,
       flow,
+      traceId,
     });
 
     await applySuccessfulLoginCookie(response, authResult.session_token!);
@@ -473,7 +517,19 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const response = buildInternalErrorResponse();
+    const response = buildInternalErrorResponse({
+      traceId,
+      details:
+        error instanceof Error
+          ? {
+              name: error.name,
+              message: error.message,
+            }
+          : {
+              name: "UnknownError",
+              message: "Unknown login route error",
+            },
+    });
 
     return applyFailedLoginCleanup(response);
   }

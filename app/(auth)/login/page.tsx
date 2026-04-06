@@ -18,7 +18,10 @@ type Lang = "es" | "pt";
 
 type LoginApiResponse = {
   ok?: boolean;
+  code?: string;
   message?: string;
+  trace_id?: string | null;
+  details?: Record<string, unknown> | null;
   requires_tenant_selection?: boolean;
   redirect_to?: string | null;
   session?: {
@@ -163,6 +166,9 @@ function buildUiEventPayload(input: {
   pathname: string;
   success?: boolean;
   detail?: string | null;
+  code?: string | null;
+  traceId?: string | null;
+  status?: number | null;
 }) {
   return {
     eventName: input.eventName,
@@ -174,6 +180,9 @@ function buildUiEventPayload(input: {
     pathname: input.pathname,
     success: input.success ?? null,
     detail: input.detail ?? null,
+    code: input.code ?? null,
+    traceId: input.traceId ?? null,
+    status: input.status ?? null,
     surface: "auth-login-page",
   };
 }
@@ -186,6 +195,9 @@ function emitUiEvent(input: {
   returnTo: string | null;
   success?: boolean;
   detail?: string | null;
+  code?: string | null;
+  traceId?: string | null;
+  status?: number | null;
 }) {
   try {
     const pathname =
@@ -200,6 +212,9 @@ function emitUiEvent(input: {
       pathname,
       success: input.success,
       detail: input.detail ?? null,
+      code: input.code ?? null,
+      traceId: input.traceId ?? null,
+      status: input.status ?? null,
     });
 
     console.info("[auth/login-ui-event]", payload);
@@ -445,6 +460,8 @@ export default function LoginPage() {
         returnTo,
         success: false,
         detail: "missing_required_fields",
+        code: "AUTH_LOGIN_UI_VALIDATION_FAILED",
+        status: 400,
       });
 
       return;
@@ -466,6 +483,8 @@ export default function LoginPage() {
         returnTo,
         success: false,
         detail: "field_validation_error",
+        code: "AUTH_LOGIN_UI_VALIDATION_FAILED",
+        status: 400,
       });
 
       return;
@@ -499,8 +518,10 @@ export default function LoginPage() {
         tenant_hint: tenantHint,
         requested_lang: lang,
         login_context: {
-         authority:
-          typeof window !== "undefined" ? window.location.host : "proceit-auth.vercel.app",
+          authority:
+            typeof window !== "undefined"
+              ? window.location.host
+              : "proceit-auth.vercel.app",
           channel: "web",
           surface: "login-page",
           user_agent:
@@ -528,17 +549,43 @@ export default function LoginPage() {
       const data = await parseJsonSafely<LoginApiResponse>(response);
 
       if (!response.ok || !data?.ok) {
-        const failureMessage =
-          data?.message ||
-          (lang === "es"
-            ? "No fue posible iniciar sesión con los datos informados."
-            : "Não foi possível iniciar sessão com os dados informados.");
+        const errorCode =
+          typeof data?.code === "string" && data.code.trim().length > 0
+            ? data.code
+            : "AUTH_LOGIN_REQUEST_FAILED";
+
+        const errorMessage =
+          typeof data?.message === "string" && data.message.trim().length > 0
+            ? data.message
+            : lang === "es"
+              ? "No fue posible iniciar sesión con los datos informados."
+              : "Não foi possível iniciar sessão com os dados informados.";
+
+        const traceId =
+          typeof data?.trace_id === "string" && data.trace_id.trim().length > 0
+            ? data.trace_id
+            : null;
+
+        const details =
+          data?.details && typeof data.details === "object"
+            ? data.details
+            : null;
+
+        console.error("[AUTH_LOGIN_FAILED_RESPONSE]", {
+          status: response.status,
+          ok: data?.ok ?? null,
+          code: errorCode,
+          message: errorMessage,
+          trace_id: traceId,
+          details,
+          payload: data,
+        });
 
         if (!isMountedRef.current) {
           return;
         }
 
-        setError(failureMessage);
+        setError(errorMessage);
 
         emitUiEvent({
           eventName: "AUTH_LOGIN_UI_SUBMIT_FAILED",
@@ -547,7 +594,10 @@ export default function LoginPage() {
           tenantHint,
           returnTo,
           success: false,
-          detail: failureMessage,
+          detail: errorMessage,
+          code: errorCode,
+          traceId,
+          status: response.status,
         });
 
         return;
@@ -578,6 +628,15 @@ export default function LoginPage() {
         returnTo,
         success: true,
         detail: nextUrl,
+        code:
+          typeof data.code === "string" && data.code.trim().length > 0
+            ? data.code
+            : "AUTH_LOGIN_SUCCESS",
+        traceId:
+          typeof data.trace_id === "string" && data.trace_id.trim().length > 0
+            ? data.trace_id
+            : null,
+        status: response.status,
       });
 
       router.replace(nextUrl);
@@ -614,6 +673,8 @@ export default function LoginPage() {
           err instanceof Error
             ? err.message
             : "unexpected_unknown_runtime_error",
+        code: "AUTH_LOGIN_UI_NETWORK_OR_RUNTIME_ERROR",
+        status: 500,
       });
     } finally {
       if (isMountedRef.current) {
