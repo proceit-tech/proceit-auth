@@ -18,8 +18,12 @@ type ApplySessionContextRow = {
   result: AuthContext | null;
 };
 
-type CallableDbTransactionClient =
-  DbTransactionClient & ((...args: any[]) => any);
+type SqlCallable = <TRow extends Record<string, unknown> = Record<string, unknown>>(
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+) => Promise<TRow[]>;
+
+type CallableDbTransactionClient = DbTransactionClient & SqlCallable;
 
 function isUuidLike(value: string | null | undefined): boolean {
   if (!value) {
@@ -204,9 +208,9 @@ export async function withSqlAuthContext<T>(
   return withDbTransaction(async (tx) => {
     const callableTx = tx as CallableDbTransactionClient;
 
-    const rows = (await callableTx`
+    const rows = await callableTx<ApplySessionContextRow>`
       select core_identity.apply_session_context(${sessionId}::uuid) as result
-    `) as ApplySessionContextRow[];
+    `;
 
     const appliedContext = assertAuthorizedContext(rows[0]?.result ?? null);
 

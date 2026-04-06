@@ -443,6 +443,10 @@ export async function POST(req: NextRequest) {
       return applyFailedLoginCleanup(response);
     }
 
+    const validatedSessionToken = requireValidSessionToken(
+      authResult.session_token
+    );
+
     const flow = buildLoginSuccessFlow({
       requiresTenantSelection:
         authResult.requires_tenant_selection ?? false,
@@ -455,7 +459,7 @@ export async function POST(req: NextRequest) {
       traceId,
     });
 
-    await applySuccessfulLoginCookie(response, authResult.session_token!);
+    await applySuccessfulLoginCookie(response, validatedSessionToken);
 
     await logAuthEvent({
       event_code: "auth.login.success",

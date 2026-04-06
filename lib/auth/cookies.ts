@@ -1,16 +1,9 @@
 import { cookies } from "next/headers";
-
 import { env } from "@/lib/config/env";
 
-const AUTH_COOKIE_NAME = requireNonEmptyString(
-  env.AUTH_COOKIE_NAME,
-  "AUTH_COOKIE_NAME_INVALID"
-);
-
-const AUTH_REFRESH_COOKIE_NAME = requireNonEmptyString(
-  env.AUTH_REFRESH_COOKIE_NAME,
-  "AUTH_REFRESH_COOKIE_NAME_INVALID"
-);
+/* =========================
+   TYPES
+========================= */
 
 type CookieSameSite = "lax" | "strict" | "none";
 
@@ -54,11 +47,6 @@ function requireReasonableToken(
 ): string {
   const normalized = requireNonEmptyString(value, errorCode);
 
-  /**
-   * Hardening:
-   * - evita header overflow
-   * - evita payload malicioso exagerado
-   */
   if (normalized.length > 2048) {
     throw new Error(`${errorCode}_TOO_LARGE`);
   }
@@ -78,18 +66,30 @@ function requirePositiveInteger(
 }
 
 /* =========================
+   HELPERS ENV LAZY
+========================= */
+
+function getAuthCookieName(): string {
+  return requireNonEmptyString(
+    env.AUTH_COOKIE_NAME,
+    "AUTH_COOKIE_NAME_INVALID"
+  );
+}
+
+function getRefreshCookieName(): string {
+  return requireNonEmptyString(
+    env.AUTH_REFRESH_COOKIE_NAME,
+    "AUTH_REFRESH_COOKIE_NAME_INVALID"
+  );
+}
+
+/* =========================
    NORMALIZADORES
 ========================= */
 
 function normalizeOptionalDomain(domain?: string | null): string | undefined {
   const normalizedDomain = domain?.trim();
 
-  /**
-   * Regra oficial:
-   * - usar domínio explícito quando configurado;
-   * - se não estiver configurado, operar em host-only cookie;
-   * - nunca inferir domínio automaticamente.
-   */
   if (!normalizedDomain) {
     return undefined;
   }
@@ -135,10 +135,6 @@ function buildCookieSecurityOptions(params: {
   const normalizedSameSite = normalizeSameSite(params.sameSite, "lax");
   const normalizedDomain = normalizeOptionalDomain(params.domain);
 
-  /**
-   * Regra de compatibilidade de navegador:
-   * SameSite=None exige Secure=true.
-   */
   if (normalizedSameSite === "none" && !params.secure) {
     throw new Error(
       params.kind === "session"
@@ -158,7 +154,7 @@ function buildCookieSecurityOptions(params: {
 
 function buildSessionCookieDefinition(): CookieDefinition {
   return {
-    name: AUTH_COOKIE_NAME,
+    name: getAuthCookieName(),
     ...buildCookieSecurityOptions({
       kind: "session",
       secure: env.AUTH_COOKIE_SECURE,
@@ -174,7 +170,7 @@ function buildSessionCookieDefinition(): CookieDefinition {
 
 function buildRefreshCookieDefinition(): CookieDefinition {
   return {
-    name: AUTH_REFRESH_COOKIE_NAME,
+    name: getRefreshCookieName(),
     ...buildCookieSecurityOptions({
       kind: "refresh",
       secure: env.AUTH_REFRESH_COOKIE_SECURE,
@@ -199,7 +195,7 @@ function buildExpiredCookieDefinition(
 }
 
 /* =========================
-   LOW LEVEL OPERATIONS
+   LOW LEVEL
 ========================= */
 
 async function getCookieValueByName(name: string): Promise<string | null> {
@@ -227,11 +223,6 @@ async function setCookieValue(
 async function clearCookieValue(definition: CookieDefinition): Promise<void> {
   const store = await getCookieStore();
 
-  /**
-   * IMPORTANTE:
-   * - domain/path devem ser idênticos ao cookie original
-   * - senão o browser não remove o cookie
-   */
   store.set({
     ...buildExpiredCookieDefinition(definition),
     value: "",
@@ -243,18 +234,13 @@ async function clearCookieValue(definition: CookieDefinition): Promise<void> {
 ========================= */
 
 export async function getSessionCookie(): Promise<string | null> {
-  return getCookieValueByName(AUTH_COOKIE_NAME);
+  return getCookieValueByName(getAuthCookieName());
 }
 
 export async function setSessionCookie(sessionToken: string): Promise<void> {
-  const normalizedSessionToken = requireReasonableToken(
-    sessionToken,
-    "AUTH_SESSION_TOKEN_REQUIRED"
-  );
-
   await setCookieValue(
     buildSessionCookieDefinition(),
-    normalizedSessionToken
+    sessionToken
   );
 }
 
@@ -267,103 +253,16 @@ export async function clearSessionCookie(): Promise<void> {
 ========================= */
 
 export async function getRefreshCookie(): Promise<string | null> {
-  return getCookieValueByName(AUTH_REFRESH_COOKIE_NAME);
+  return getCookieValueByName(getRefreshCookieName());
 }
 
 export async function setRefreshCookie(refreshToken: string): Promise<void> {
-  const normalizedRefreshToken = requireReasonableToken(
-    refreshToken,
-    "AUTH_REFRESH_TOKEN_REQUIRED"
-  );
-
   await setCookieValue(
     buildRefreshCookieDefinition(),
-    normalizedRefreshToken
+    refreshToken
   );
 }
 
 export async function clearRefreshCookie(): Promise<void> {
   await clearCookieValue(buildRefreshCookieDefinition());
-}
-
-/* =========================
-   HELPERS COMBINADOS
-========================= */
-
-export async function clearAuthCookies(): Promise<void> {
-  const sessionDefinition = buildSessionCookieDefinition();
-  const refreshDefinition = buildRefreshCookieDefinition();
-
-  await clearCookieValue(sessionDefinition);
-  await clearCookieValue(refreshDefinition);
-}
-
-export async function setAuthCookies(params: {
-  sessionToken: string;
-  refreshToken?: string | null;
-}): Promise<void> {
-  const sessionToken = requireReasonableToken(
-    params.sessionToken,
-    "AUTH_SESSION_TOKEN_REQUIRED"
-  );
-
-  const hasValidRefresh =
-    typeof params.refreshToken === "string" &&
-    params.refreshToken.trim().length > 0;
-
-  await setSessionCookie(sessionToken);
-
-  if (hasValidRefresh) {
-    await setRefreshCookie(params.refreshToken!);
-  } else {
-    await clearRefreshCookie();
-  }
-}
-
-/* =========================
-   HELPERS DE INSPEÇÃO
-========================= */
-
-export function getSessionCookieName(): string {
-  return AUTH_COOKIE_NAME;
-}
-
-export function getRefreshCookieName(): string {
-  return AUTH_REFRESH_COOKIE_NAME;
-}
-
-export function getSessionCookieDefinition(): Readonly<CookieDefinition> {
-  return Object.freeze(buildSessionCookieDefinition());
-}
-
-export function getRefreshCookieDefinition(): Readonly<CookieDefinition> {
-  return Object.freeze(buildRefreshCookieDefinition());
-}
-
-/* =========================
-   COMPATIBILIDADE TEMPORÁRIA
-========================= */
-
-export async function getSessionTokenFromCookie(): Promise<string | null> {
-  return getSessionCookie();
-}
-
-export async function setSessionTokenCookie(
-  sessionToken: string
-): Promise<void> {
-  await setSessionCookie(sessionToken);
-}
-
-export async function clearSessionTokenCookie(): Promise<void> {
-  await clearSessionCookie();
-}
-
-/* =========================
-   COMPATIBILIDADE LEGADA
-========================= */
-
-export async function setSessionIdCookie(
-  sessionToken: string
-): Promise<void> {
-  await setSessionCookie(sessionToken);
 }
