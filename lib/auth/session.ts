@@ -725,20 +725,20 @@ export async function getSessionContext(
 
   return runSingleResultFunction<AuthContext, AuthContext>({
     queryFactory: async () => {
-      if (isUuidLike(resolvedIdentifier)) {
-        return db<SqlFunctionResultRow<AuthContext>[]>`
-          select core_identity.get_session_context(
-            ${resolvedIdentifier}::uuid
-          ) as result
-        `;
-      }
-
-      return db<SqlFunctionResultRow<AuthContext>[]>`
+    if (isUuidLike(resolvedIdentifier)) {
+      return db`
         select core_identity.get_session_context(
-          ${resolvedIdentifier}
+          ${resolvedIdentifier}::uuid
         ) as result
       `;
-    },
+    }
+
+    return db`
+      select core_identity.get_session_context(
+        ${resolvedIdentifier}
+      ) as result
+    `;
+  },
     emptyFallback: SESSION_CONTEXT_EMPTY,
     errorFallback: SESSION_CONTEXT_FAILED,
     normalize: normalizeAuthContext,
@@ -761,13 +761,13 @@ export async function selectTenantForSession(params: {
 
   return runSingleResultFunction<AuthContext, AuthContext>({
     queryFactory: async () => {
-      return db<SqlFunctionResultRow<AuthContext>[]>`
-        select core_identity.select_session_tenant(
-          ${sessionId}::uuid,
-          ${tenantId}::uuid
-        ) as result
-      `;
-    },
+    return db`
+      select core_identity.select_session_tenant(
+        ${sessionId}::uuid,
+        ${tenantId}::uuid
+      ) as result
+    `;
+  },
     emptyFallback: TENANT_SELECTION_EMPTY,
     errorFallback: TENANT_SELECTION_FAILED,
     normalize: normalizeAuthContext,
@@ -792,7 +792,7 @@ export async function revokeSession(params: {
 
   return runSingleResultFunction<RevokeSessionResult, RevokeSessionResult>({
     queryFactory: async () => {
-      return db<SqlFunctionResultRow<RevokeSessionResult>[]>`
+      return db`
         select core_identity.revoke_session(
           ${sessionId}::uuid,
           ${reason}
@@ -820,8 +820,8 @@ export async function logoutSession(params: {
   const reason = resolveReason(params.reason, "user_logout");
 
   return runSingleResultFunction<RevokeSessionResult, RevokeSessionResult>({
-    queryFactory: async () => {
-      return db<SqlFunctionResultRow<RevokeSessionResult>[]>`
+   queryFactory: async () => {
+      return db`
         select core_identity.logout_session(
           ${sessionId}::uuid,
           ${reason}
@@ -846,8 +846,8 @@ export async function refreshSessionWithToken(params: {
   const refreshToken = resolveRefreshToken(params.refreshToken);
 
   return runSingleResultFunction<RefreshSessionResult, RefreshSessionResult>({
-    queryFactory: async () => {
-      return db<SqlFunctionResultRow<RefreshSessionResult>[]>`
+   queryFactory: async () => {
+      return db`
         select core_identity.refresh_session_with_token(
           ${sessionId}::uuid,
           ${refreshToken}
