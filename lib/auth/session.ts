@@ -669,7 +669,7 @@ export async function authenticateByDocument(params: {
         select core_identity.login_with_document(
           ${document},
           ${password},
-          ${params.ipAddress ?? null}::inet,
+          ${params.ipAddress && params.ipAddress.length > 0 ? params.ipAddress : null}::inet,
           ${params.userAgent ?? null},
           ${"auth.web"},
           ${sessionHours},
