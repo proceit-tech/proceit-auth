@@ -160,42 +160,84 @@ export type AuthEventSeverity =
   | "error"
   | "critical";
 
+export type AuthEventStatus =
+  | "success"
+  | "failed"
+  | "error"
+  | "warning"
+  | "pending";
+
+export type AuthEventMetadata = Record<string, unknown> | null;
+
 /**
- * 🔥 NOVO CONTRATO — ALINHADO AO CONTROL TOWER
+ * Contrato oficial de eventos de auth / observabilidade.
+ *
+ * Este tipo é o ponto central entre:
+ * - rotas auth
+ * - session lifecycle
+ * - audit log
+ * - Control Tower
+ *
+ * Regras:
+ * - `event_code` e `event_type` são obrigatórios;
+ * - `session_id` é o identificador estrutural;
+ * - `session_token` nunca deve ser persistido;
+ * - campos críticos devem existir como colunas (não só metadata);
+ * - metadata é complementar, não substituto de colunas.
  */
 export type AuthEventInput = {
-  // Identidade do evento
+  /**
+   * Identidade do evento
+   */
   event_code: string;
   event_type: string;
 
-  // Severidade e status
+  /**
+   * Classificação
+   */
   severity?: AuthEventSeverity;
-  status?: "success" | "failed" | "error" | "warning" | "pending";
+  status?: AuthEventStatus;
 
-  // Mensagem
+  /**
+   * Mensagem e apresentação
+   */
   message?: string;
+  title?: string | null;
 
-  // Identidade
+  /**
+   * Identidade
+   */
   user_id?: Uuid | null;
   tenant_id?: Uuid | null;
   session_id?: Uuid | null;
 
-  // Origem
+  /**
+   * Origem HTTP / runtime
+   */
   route?: string | null;
   method?: string | null;
   source?: string | null;
 
-  // Observabilidade
-  trace_id?: string | null;
+  /**
+   * Telemetria de cliente
+   */
+  ip_address?: string | null;
+  user_agent?: string | null;
   fingerprint?: string | null;
 
-  // Domínio
+  /**
+   * Observabilidade distribuída
+   */
+  trace_id?: string | null;
+
+  /**
+   * Contexto de domínio (sobrescrito no runtime)
+   */
   product_code?: string | null;
   module_code?: string | null;
 
-  // Apresentação
-  title?: string | null;
-
-  // Payload adicional
-  metadata?: Record<string, unknown> | null;
+  /**
+   * Dados adicionais
+   */
+  metadata?: AuthEventMetadata;
 };

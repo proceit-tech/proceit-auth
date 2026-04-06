@@ -4,31 +4,69 @@ import type {
   AuthEventSeverity,
 } from "@/lib/auth/types";
 
+type ControlTowerEventStatus =
+  | "success"
+  | "failed"
+  | "error"
+  | "warning"
+  | "pending";
+
 type ControlTowerEventInput = {
+  /**
+   * Identidade oficial do evento.
+   */
   event_code?: string | null;
   event_type: string;
-  severity?: AuthEventSeverity;
-  message?: string | null;
 
+  /**
+   * Classificação operacional.
+   */
+  severity?: AuthEventSeverity;
+  status?: ControlTowerEventStatus | string | null;
+
+  /**
+   * Mensagem / apresentação.
+   */
+  message?: string | null;
+  title?: string | null;
+
+  /**
+   * Identidade contextual.
+   */
   user_id?: string | null;
   tenant_id?: string | null;
+  session_id?: string | null;
 
+  /**
+   * Origem da requisição / execução.
+   */
   route?: string | null;
   method?: string | null;
+  source?: string | null;
+
+  /**
+   * Telemetria de cliente / rede.
+   */
   ip_address?: string | null;
   user_agent?: string | null;
-
-  metadata?: Record<string, unknown> | null;
-  occurred_at?: string | Date | null;
-
-  product_code?: string | null;
-  module_code?: string | null;
-  status?: string | null;
-  source?: string | null;
-  title?: string | null;
   fingerprint?: string | null;
   trace_id?: string | null;
-  session_id?: string | null;
+
+  /**
+   * Contexto de domínio.
+   */
+  product_code?: string | null;
+  module_code?: string | null;
+
+  /**
+   * Dados adicionais.
+   */
+  metadata?: Record<string, unknown> | null;
+
+  /**
+   * Momento explícito do evento.
+   */
+  occurred_at?: string | Date | null;
 };
 
 const HTTP_METHODS = new Set([
@@ -99,19 +137,25 @@ function normalizeOptionalUuid(
   return isUuidLike(normalized) ? normalized : null;
 }
 
-function isIpLike(value: string): boolean {
+function isIpv4Like(value: string): boolean {
   const normalized = value.trim();
 
   const ipv4 =
     /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
 
+  return ipv4.test(normalized);
+}
+
+function isIpv6Like(value: string): boolean {
+  const normalized = value.trim();
+
   const ipv6 =
     /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|::1|::)$/;
 
-  return ipv4.test(normalized) || ipv6.test(normalized);
+  return ipv6.test(normalized);
 }
 
-function normalizeOptionalIp(
+function extractFirstForwardedIp(
   value: string | null | undefined
 ): string | null {
   const normalized = normalizeOptionalString(value);
@@ -120,7 +164,24 @@ function normalizeOptionalIp(
     return null;
   }
 
-  return isIpLike(normalized) ? normalized : null;
+  const first = normalized.split(",")[0]?.trim() ?? "";
+  return first.length > 0 ? first : null;
+}
+
+function normalizeOptionalIp(
+  value: string | null | undefined
+): string | null {
+  const firstIp = extractFirstForwardedIp(value);
+
+  if (!firstIp) {
+    return null;
+  }
+
+  if (isIpv4Like(firstIp) || isIpv6Like(firstIp)) {
+    return firstIp;
+  }
+
+  return null;
 }
 
 function normalizeHttpMethod(
@@ -133,7 +194,12 @@ function normalizeHttpMethod(
   }
 
   const upper = normalized.toUpperCase();
-  return HTTP_METHODS.has(upper) ? upper : upper;
+
+  if (HTTP_METHODS.has(upper)) {
+    return upper;
+  }
+
+  return upper;
 }
 
 function normalizeOccurredAt(
@@ -197,6 +263,11 @@ function inferFingerprint(input: ControlTowerEventInput): string | null {
 
   const eventCode = normalizeOptionalString(input.event_code);
   const route = normalizeOptionalString(input.route);
+  const method = normalizeHttpMethod(input.method);
+
+  if (eventCode && method && route) {
+    return `${eventCode}:${method}:${route}`;
+  }
 
   if (eventCode && route) {
     return `${eventCode}:${route}`;
@@ -210,10 +281,16 @@ function inferStatus(input: {
   severity: AuthEventSeverity;
   eventCode?: string | null;
   eventType: string;
-}): string {
+}): ControlTowerEventStatus {
   const explicit = normalizeOptionalString(input.explicitStatus);
 
-  if (explicit) {
+  if (
+    explicit === "success" ||
+    explicit === "failed" ||
+    explicit === "error" ||
+    explicit === "warning" ||
+    explicit === "pending"
+  ) {
     return explicit;
   }
 
@@ -303,11 +380,59 @@ function buildPayload(
 
   return {
     event_code: normalizeOptionalString(input.event_code),
+    event_type: normalizeOptionalString(input.event_type),
     route: normalizeOptionalString(input.route),
     method: normalizeHttpMethod(input.method),
     ip_address: normalizeOptionalIp(input.ip_address),
     user_agent: normalizeOptionalString(input.user_agent),
+    source: normalizeOptionalString(input.source),
+    trace_id: normalizeOptionalString(input.trace_id),
+    fingerprint: normalizeOptionalString(input.fingerprint),
     metadata,
+  };
+}
+
+function buildAuthControlTowerInput(
+  input: AuthEventInput
+): ControlTowerEventInput {
+  const metadata = normalizeMetadata(input.metadata);
+
+  const normalizedSessionId =
+    normalizeOptionalUuid(input.session_id) ??
+    extractMetadataSessionId(metadata);
+
+  return {
+    event_code: input.event_code,
+    event_type: input.event_type,
+
+    severity: input.severity ?? "info",
+    status: input.status ?? null,
+
+    message: input.message ?? null,
+    title: input.title ?? null,
+
+    user_id: normalizeOptionalUuid(input.user_id),
+    tenant_id: normalizeOptionalUuid(input.tenant_id),
+    session_id: normalizedSessionId,
+
+    route: input.route ?? null,
+    method: input.method ?? null,
+    source: input.source ?? null,
+
+    ip_address: input.ip_address ?? null,
+    user_agent: input.user_agent ?? null,
+    fingerprint: input.fingerprint ?? null,
+    trace_id: input.trace_id ?? null,
+
+    /**
+     * Auth events sempre caem no produto/módulo oficial.
+     * Não aceitar sobrescrita externa aqui para manter governança.
+     */
+    product_code: "auth",
+    module_code: "identity",
+
+    metadata,
+    occurred_at: null,
   };
 }
 
@@ -382,6 +507,7 @@ export async function logControlTowerEvent(
       method: normalizeHttpMethod(input.method),
       user_id: normalizeOptionalUuid(input.user_id),
       tenant_id: normalizeOptionalUuid(input.tenant_id),
+      session_id: normalizeOptionalUuid(input.session_id),
       error:
         error instanceof Error
           ? {
@@ -397,16 +523,6 @@ export async function logControlTowerEvent(
 }
 
 export async function logAuthEvent(input: AuthEventInput): Promise<void> {
-  const metadata = normalizeMetadata(input.metadata);
-
-  await logControlTowerEvent({
-    ...input,
-    severity: input.severity ?? "info",
-    product_code: "auth",
-    module_code: "identity",
-    session_id:
-      typeof metadata.session_id === "string"
-        ? metadata.session_id
-        : null,
-  });
+  const controlTowerInput = buildAuthControlTowerInput(input);
+  await logControlTowerEvent(controlTowerInput);
 }
