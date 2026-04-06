@@ -51,7 +51,11 @@ const rangedPositiveIntegerFromString = (
   });
 
 const booleanFromString = (fieldName: string) =>
-  z.string().transform((value, ctx) => {
+  z.union([z.string(), z.boolean()]).transform((value, ctx) => {
+    if (typeof value === "boolean") {
+      return value;
+    }
+
     const normalized = value.trim().toLowerCase();
 
     if (normalized === "true") {
@@ -105,7 +109,7 @@ const rawEnvSchema = z
      */
     AUTH_COOKIE_NAME: z.string().min(1).default("proceit_session"),
     AUTH_COOKIE_DOMAIN: optionalNormalizedString,
-    AUTH_COOKIE_SECURE: booleanFromString("AUTH_COOKIE_SECURE").default("true"),
+    AUTH_COOKIE_SECURE: booleanFromString("AUTH_COOKIE_SECURE").default(true),
     AUTH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
 
     /**
@@ -115,7 +119,7 @@ const rawEnvSchema = z
     AUTH_REFRESH_COOKIE_DOMAIN: optionalNormalizedString,
     AUTH_REFRESH_COOKIE_SECURE: booleanFromString(
       "AUTH_REFRESH_COOKIE_SECURE"
-    ).default("true"),
+    ).default(true),
     AUTH_REFRESH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
 
     /**
@@ -263,4 +267,4 @@ export function getSupabaseEnv(): SupabaseEnv {
   }
 
   return result.data;
-} 
+}
