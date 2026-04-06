@@ -687,19 +687,20 @@ export async function authenticateByDocument(params: {
   const refreshHours = resolveRefreshHours(params.refreshHours);
 
   return runSingleResultFunction<LoginResult, LoginResult>({
-    queryFactory: async () => {
-      return db<SqlFunctionResultRow<LoginResult>[]>`
-        select core_identity.login_with_document(
-          ${document},
-          ${password},
-          ${params.ipAddress && params.ipAddress.length > 0 ? params.ipAddress : null}::inet,
-          ${params.userAgent ?? null},
-          ${"auth.web"},
-          ${sessionHours},
-          ${refreshHours}
+   queryFactory: async () => {
+    return db`
+      select
+        core_identity.login_with_document(
+          ${document}::text,
+          ${password}::text,
+          ${params.ipAddress ?? null}::inet,
+          ${params.userAgent ?? null}::text,
+          ${"auth.web"}::text,
+          ${sessionHours}::integer,
+          ${refreshHours}::integer
         ) as result
-      `;
-    },
+    `;
+  },
     emptyFallback: LOGIN_RESULT_EMPTY,
     errorFallback: LOGIN_RESULT_FAILED,
     normalize: normalizeLoginResult,
