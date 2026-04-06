@@ -633,6 +633,29 @@ async function runSingleResultFunction<TRaw, TNormalized>(params: {
     return params.normalize(rawResult);
   } catch (error) {
     console.error(params.errorLabel, error);
+
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : "Unknown database runtime error";
+
+    const errorCode =
+      error instanceof Error && error.name
+        ? `${params.errorLabel}:${error.name}`
+        : `${params.errorLabel}:UnknownError`;
+
+    if (
+      params.errorFallback &&
+      typeof params.errorFallback === "object" &&
+      params.errorFallback !== null
+    ) {
+      return {
+        ...(params.errorFallback as Record<string, unknown>),
+        code: errorCode,
+        message: errorMessage,
+      } as TNormalized;
+    }
+
     return params.errorFallback;
   }
 }
