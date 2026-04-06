@@ -39,6 +39,31 @@ type DbTransactionCallback<T> = (tx: DbTransactionClient) => Promise<T>;
 
 export type DbClient = DbSqlClient;
 
+type UnknownRecord = Record<string, unknown>;
+
+type DatabaseHealthResult = {
+  ok: boolean;
+  code: string;
+};
+
+type DatabaseRuntimeFingerprintResult = {
+  ok: boolean;
+  database?: string;
+  current_user?: string;
+  server_addr?: string | null;
+  server_port?: number | null;
+  application_name?: string | null;
+  error?: string;
+};
+
+type DatabaseRuntimeFingerprintRow = {
+  database: string;
+  current_user: string;
+  server_addr: string | null;
+  server_port: number | null;
+  application_name: string | null;
+};
+
 /* =========================
    RUNTIME CONSTANTS
 ========================= */
@@ -48,6 +73,24 @@ const DB_POOL_MAX_CONNECTIONS = 10;
 const DB_IDLE_TIMEOUT_MILLISECONDS = 30_000;
 const DB_CONNECTION_TIMEOUT_MILLISECONDS = 10_000;
 const DB_MAX_USES = 10_000;
+const DB_CLOSE_TIMEOUT_SECONDS = 5;
+
+/* =========================
+   HELPERS
+========================= */
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readNumericRecordField(
+  record: UnknownRecord,
+  fieldName: string
+): number | null {
+  const value = record[fieldName];
+
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 function buildSslConfigForPg(): PoolConfig["ssl"] {
   return {
@@ -60,6 +103,14 @@ function buildSslConfigForPostgres():
   | boolean
   | postgres.Options<Record<string, PostgresType>>["ssl"] {
   return "require";
+}
+
+function extractDebugConnectionPid(connection: unknown): number | null {
+  if (!isRecord(connection)) {
+    return null;
+  }
+
+  return readNumericRecordField(connection, "pid");
 }
 
 /* =========================
@@ -148,17 +199,12 @@ function createSqlClient(): DbSqlClient {
 
     debug(connection, query, parameters) {
       if (!env.isProduction) {
+        const pid = extractDebugConnectionPid(connection);
+
         console.debug("DB_POSTGRES_DEBUG", {
-          connection:
-            typeof connection === "object" && connection !== null
-              ? {
-                  pid:
-                    "pid" in connection &&
-                    typeof connection.pid === "number"
-                      ? connection.pid
-                      : null,
-                }
-              : null,
+          connection: {
+            pid,
+          },
           query,
           parameters_count: Array.isArray(parameters)
             ? parameters.length
@@ -199,10 +245,7 @@ export async function withDbTransaction<T>(
    HEALTH
 ========================= */
 
-export async function checkDatabaseHealth(): Promise<{
-  ok: boolean;
-  code: string;
-}> {
+export async function checkDatabaseHealth(): Promise<DatabaseHealthResult> {
   try {
     await db`select 1`;
 
@@ -218,23 +261,9 @@ export async function checkDatabaseHealth(): Promise<{
   }
 }
 
-export async function getDatabaseRuntimeFingerprint(): Promise<{
-  ok: boolean;
-  database?: string;
-  current_user?: string;
-  server_addr?: string | null;
-  server_port?: number | null;
-  application_name?: string | null;
-  error?: string;
-}> {
+export async function getDatabaseRuntimeFingerprint(): Promise<DatabaseRuntimeFingerprintResult> {
   try {
-    const rows = await db<{
-      database: string;
-      current_user: string;
-      server_addr: string | null;
-      server_port: number | null;
-      application_name: string | null;
-    }>`
+    const rows = await db<DatabaseRuntimeFingerprintRow>`
       select
         current_database() as database,
         current_user as current_user,
@@ -269,7 +298,7 @@ export async function closePool(): Promise<void> {
 }
 
 export async function closeSqlClient(): Promise<void> {
-  await sqlClient.end({ timeout: 5 });
+  await sqlClient.end({ timeout: DB_CLOSE_TIMEOUT_SECONDS });
 }
 
 export async function closeDatabaseConnections(): Promise<void> {
