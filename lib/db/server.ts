@@ -234,7 +234,7 @@ export async function getDatabaseRuntimeFingerprint(): Promise<{
       server_addr: string | null;
       server_port: number | null;
       application_name: string | null;
-    }[]>`
+    }>`
       select
         current_database() as database,
         current_user as current_user,

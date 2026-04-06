@@ -25,7 +25,10 @@ const DEFAULT_SESSION_HOURS = Math.max(
   Math.ceil(env.AUTH_SESSION_MAX_AGE_SECONDS / 3600)
 );
 
-const DEFAULT_REFRESH_HOURS = 168;
+const DEFAULT_REFRESH_HOURS = Math.max(
+  1,
+  Math.ceil(env.AUTH_REFRESH_MAX_AGE_SECONDS / 3600)
+);
 
 const LOGIN_RESULT_EMPTY: LoginResult = {
   ok: false,
@@ -485,8 +488,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
     return {
       ok: false,
       code: "AUTH_SESSION_TOKEN_MISSING",
-      message:
-        "Autenticación válida, pero no se recibió session_token.",
+      message: "Autenticación válida, pero no se recibió session_token.",
       session_id: resolvedSessionId,
       refresh_token: resolvedRefreshToken,
       expires_at: resolvedExpiresAt,
@@ -687,20 +689,20 @@ export async function authenticateByDocument(params: {
   const refreshHours = resolveRefreshHours(params.refreshHours);
 
   return runSingleResultFunction<LoginResult, LoginResult>({
-   queryFactory: async () => {
-    return db`
-      select
-        core_identity.login_with_document(
-          ${document}::text,
-          ${password}::text,
-          ${params.ipAddress ?? null}::inet,
-          ${params.userAgent ?? null}::text,
-          ${"auth.web"}::text,
-          ${sessionHours}::integer,
-          ${refreshHours}::integer
-        ) as result
-    `;
-  },
+    queryFactory: async () => {
+      return db`
+        select
+          core_identity.login_with_document(
+            ${document}::text,
+            ${password}::text,
+            ${params.ipAddress ?? null}::inet,
+            ${params.userAgent ?? null}::text,
+            ${"auth.web"}::text,
+            ${sessionHours}::integer,
+            ${refreshHours}::integer
+          ) as result
+      `;
+    },
     emptyFallback: LOGIN_RESULT_EMPTY,
     errorFallback: LOGIN_RESULT_FAILED,
     normalize: normalizeLoginResult,
@@ -725,20 +727,20 @@ export async function getSessionContext(
 
   return runSingleResultFunction<AuthContext, AuthContext>({
     queryFactory: async () => {
-    if (isUuidLike(resolvedIdentifier)) {
+      if (isUuidLike(resolvedIdentifier)) {
+        return db`
+          select core_identity.get_session_context(
+            ${resolvedIdentifier}::uuid
+          ) as result
+        `;
+      }
+
       return db`
         select core_identity.get_session_context(
-          ${resolvedIdentifier}::uuid
+          ${resolvedIdentifier}
         ) as result
       `;
-    }
-
-    return db`
-      select core_identity.get_session_context(
-        ${resolvedIdentifier}
-      ) as result
-    `;
-  },
+    },
     emptyFallback: SESSION_CONTEXT_EMPTY,
     errorFallback: SESSION_CONTEXT_FAILED,
     normalize: normalizeAuthContext,
@@ -761,13 +763,13 @@ export async function selectTenantForSession(params: {
 
   return runSingleResultFunction<AuthContext, AuthContext>({
     queryFactory: async () => {
-    return db`
-      select core_identity.select_session_tenant(
-        ${sessionId}::uuid,
-        ${tenantId}::uuid
-      ) as result
-    `;
-  },
+      return db`
+        select core_identity.select_session_tenant(
+          ${sessionId}::uuid,
+          ${tenantId}::uuid
+        ) as result
+      `;
+    },
     emptyFallback: TENANT_SELECTION_EMPTY,
     errorFallback: TENANT_SELECTION_FAILED,
     normalize: normalizeAuthContext,
@@ -820,7 +822,7 @@ export async function logoutSession(params: {
   const reason = resolveReason(params.reason, "user_logout");
 
   return runSingleResultFunction<RevokeSessionResult, RevokeSessionResult>({
-   queryFactory: async () => {
+    queryFactory: async () => {
       return db`
         select core_identity.logout_session(
           ${sessionId}::uuid,
@@ -846,7 +848,7 @@ export async function refreshSessionWithToken(params: {
   const refreshToken = resolveRefreshToken(params.refreshToken);
 
   return runSingleResultFunction<RefreshSessionResult, RefreshSessionResult>({
-   queryFactory: async () => {
+    queryFactory: async () => {
       return db`
         select core_identity.refresh_session_with_token(
           ${sessionId}::uuid,
@@ -886,7 +888,7 @@ export async function revokeAllSessionsForUser(params: {
   const reason = resolveReason(params.reason, "user_logout_all");
 
   try {
-    const rows = await db<{ affected_sessions: number }[]>`
+    const rows = await db<{ affected_sessions: number }>`
       with updated as (
         update core_identity.sessions
         set
@@ -935,7 +937,7 @@ export async function revokeSessionsByTenant(params: {
   const reason = resolveReason(params.reason, "tenant_forced_logout");
 
   try {
-    const rows = await db<{ affected_sessions: number }[]>`
+    const rows = await db<{ affected_sessions: number }>`
       with updated as (
         update core_identity.sessions
         set
