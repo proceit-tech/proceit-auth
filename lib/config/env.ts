@@ -1,269 +1,266 @@
-import "server-only";
+import { z } from "zod";
 
-import {
-  Pool,
-  type PoolClient,
-  type PoolConfig,
-  type QueryResultRow,
-} from "pg";
-import postgres, {
-  type Sql,
-  type TransactionSql,
-  type PostgresType,
-} from "postgres";
+const nodeEnvSchema = z.enum(["development", "test", "production"]);
+const cookieSameSiteSchema = z.enum(["lax", "strict", "none"]);
 
-import { env } from "@/lib/config/env";
-
-declare global {
-  // eslint-disable-next-line no-var
-  var __proceit_pg_pool__: Pool | undefined;
-
-  // eslint-disable-next-line no-var
-  var __proceit_postgres_sql__: DbSqlClient | undefined;
-}
+const POSTGRES_URL_PREFIXES = ["postgres://", "postgresql://"] as const;
 
 /* =========================
-   TYPES
+   HELPERS
 ========================= */
 
-export type QueryRowsResult<T extends QueryResultRow> = {
-  rows: T[];
-};
+const positiveIntegerFromString = (fieldName: string) =>
+  z.string().transform((value, ctx) => {
+    const parsed = Number(value);
 
-export type DbSqlClient = Sql<Record<string, PostgresType>>;
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${fieldName} must be a positive integer`,
+      });
+      return z.NEVER;
+    }
 
-export type DbTransactionClient =
-  TransactionSql<Record<string, PostgresType>>;
-
-type DbTransactionCallback<T> = (tx: DbTransactionClient) => Promise<T>;
-
-export type DbClient = DbSqlClient;
-
-/* =========================
-   RUNTIME CONSTANTS
-========================= */
-
-const DB_APPLICATION_NAME = "proceit-auth-runtime";
-const DB_POOL_MAX_CONNECTIONS = 10;
-const DB_IDLE_TIMEOUT_MILLISECONDS = 30_000;
-const DB_CONNECTION_TIMEOUT_MILLISECONDS = 10_000;
-const DB_MAX_USES = 10_000;
-
-function buildSslConfigForPg(): PoolConfig["ssl"] {
-  return {
-    rejectUnauthorized: false,
-  };
-}
-
-function buildSslConfigForPostgres():
-  | "require"
-  | boolean
-  | postgres.Options<Record<string, PostgresType>>["ssl"] {
-  return "require";
-}
-
-/* =========================
-   PG POOL
-========================= */
-
-function buildPoolConfig(): PoolConfig {
-  return {
-    connectionString: env.DATABASE_URL,
-    ssl: buildSslConfigForPg(),
-    max: DB_POOL_MAX_CONNECTIONS,
-    idleTimeoutMillis: DB_IDLE_TIMEOUT_MILLISECONDS,
-    connectionTimeoutMillis: DB_CONNECTION_TIMEOUT_MILLISECONDS,
-    maxUses: DB_MAX_USES,
-    application_name: DB_APPLICATION_NAME,
-  };
-}
-
-function createPool(): Pool {
-  const instance = new Pool(buildPoolConfig());
-
-  instance.on("error", (error) => {
-    console.error("DB_POOL_UNEXPECTED_ERROR", {
-      name: error.name,
-      message: error.message,
-    });
+    return parsed;
   });
 
-  return instance;
-}
+const rangedPositiveIntegerFromString = (
+  fieldName: string,
+  params: { min: number; max: number }
+) =>
+  z.string().transform((value, ctx) => {
+    const parsed = Number(value);
 
-const pool = global.__proceit_pg_pool__ ?? createPool();
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${fieldName} must be a positive integer`,
+      });
+      return z.NEVER;
+    }
 
-if (!env.isProduction) {
-  global.__proceit_pg_pool__ = pool;
-}
+    if (parsed < params.min || parsed > params.max) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${fieldName} must be between ${params.min} and ${params.max}`,
+      });
+      return z.NEVER;
+    }
 
-export async function query<T extends QueryResultRow>(
-  text: string,
-  params: unknown[] = []
-): Promise<QueryRowsResult<T>> {
-  const result = await pool.query<T>(text, params);
+    return parsed;
+  });
 
-  return {
-    rows: result.rows as T[],
-  };
-}
+const booleanFromString = (fieldName: string) =>
+  z.string().transform((value, ctx) => {
+    const normalized = value.trim().toLowerCase();
+
+    if (normalized === "true") {
+      return true;
+    }
+
+    if (normalized === "false") {
+      return false;
+    }
+
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${fieldName} must be "true" or "false"`,
+    });
+
+    return z.NEVER;
+  });
+
+const optionalNormalizedString = z
+  .string()
+  .transform((value) => {
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : undefined;
+  })
+  .optional();
 
 /* =========================
-   POSTGRES CLIENT
+   DATABASE
 ========================= */
 
-function createSqlClient(): DbSqlClient {
-  return postgres(env.DATABASE_URL, {
-    ssl: buildSslConfigForPostgres(),
-    max: DB_POOL_MAX_CONNECTIONS,
-    idle_timeout: Math.floor(DB_IDLE_TIMEOUT_MILLISECONDS / 1000),
-    connect_timeout: Math.floor(DB_CONNECTION_TIMEOUT_MILLISECONDS / 1000),
+const databaseUrlSchema = z
+  .string()
+  .min(1, "DATABASE_URL is required")
+  .refine(
+    (value) =>
+      POSTGRES_URL_PREFIXES.some((prefix) => value.startsWith(prefix)),
+    "DATABASE_URL must start with postgres:// or postgresql://"
+  );
+
+/* =========================
+   CORE ENV SCHEMA
+========================= */
+
+const rawEnvSchema = z
+  .object({
+    DATABASE_URL: databaseUrlSchema,
+    NODE_ENV: nodeEnvSchema.default("development"),
 
     /**
-     * Importante para compatibilidade com Supabase + pooler.
-     *
-     * Prepared statements podem gerar comportamento inconsistente
-     * em chamadas de função, casts e reuso de conexão em ambiente
-     * gerenciado / transaction pooler.
+     * SESSION COOKIE
      */
-    prepare: false,
+    AUTH_COOKIE_NAME: z.string().min(1).default("proceit_session"),
+    AUTH_COOKIE_DOMAIN: optionalNormalizedString,
+    AUTH_COOKIE_SECURE: booleanFromString("AUTH_COOKIE_SECURE").default("true"),
+    AUTH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
 
-    transform: {
-      undefined: null,
-    },
+    /**
+     * REFRESH COOKIE
+     */
+    AUTH_REFRESH_COOKIE_NAME: z.string().min(1).default("proceit_refresh"),
+    AUTH_REFRESH_COOKIE_DOMAIN: optionalNormalizedString,
+    AUTH_REFRESH_COOKIE_SECURE: booleanFromString(
+      "AUTH_REFRESH_COOKIE_SECURE"
+    ).default("true"),
+    AUTH_REFRESH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
 
-    connection: {
-      application_name: DB_APPLICATION_NAME,
-    },
+    /**
+     * TTLs
+     */
+    AUTH_SESSION_MAX_AGE_SECONDS: positiveIntegerFromString(
+      "AUTH_SESSION_MAX_AGE_SECONDS"
+    ).default(String(60 * 60 * 24 * 30)),
 
-    onnotice(notice) {
-      console.warn("DB_POSTGRES_NOTICE", {
-        severity: notice.severity,
-        code: notice.code,
-        message: notice.message,
-        detail: notice.detail,
-        hint: notice.hint,
+    AUTH_REFRESH_MAX_AGE_SECONDS: positiveIntegerFromString(
+      "AUTH_REFRESH_MAX_AGE_SECONDS"
+    ).default(String(60 * 60 * 24 * 7)),
+
+    /**
+     * Segurança / hashing
+     */
+    AUTH_BCRYPT_ROUNDS: rangedPositiveIntegerFromString(
+      "AUTH_BCRYPT_ROUNDS",
+      { min: 8, max: 15 }
+    ).default("10"),
+  })
+  .superRefine((data, ctx) => {
+    if (
+      data.AUTH_COOKIE_SAME_SITE === "none" &&
+      data.AUTH_COOKIE_SECURE !== true
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_COOKIE_SAME_SITE"],
+        message: "AUTH_COOKIE_SAME_SITE=none requires AUTH_COOKIE_SECURE=true",
       });
-    },
+    }
 
-    debug(_connection, query, parameters) {
-      if (!env.isProduction) {
-        console.debug("DB_POSTGRES_DEBUG", {
-          query,
-          parameters_count: Array.isArray(parameters)
-            ? parameters.length
-            : 0,
-        });
-      }
-    },
-  }) as DbSqlClient;
-}
-
-const sqlClient = global.__proceit_postgres_sql__ ?? createSqlClient();
-
-if (!env.isProduction) {
-  global.__proceit_postgres_sql__ = sqlClient;
-}
-
-/* =========================
-   DB EXPORT
-========================= */
-
-export const db: DbClient = sqlClient;
-
-/* =========================
-   TRANSACTION WRAPPER
-========================= */
-
-export async function withDbTransaction<T>(
-  callback: DbTransactionCallback<T>
-): Promise<T> {
-  const result = await sqlClient.begin(async (tx) => {
-    return callback(tx as DbTransactionClient);
+    if (
+      data.AUTH_REFRESH_COOKIE_SAME_SITE === "none" &&
+      data.AUTH_REFRESH_COOKIE_SECURE !== true
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AUTH_REFRESH_COOKIE_SAME_SITE"],
+        message:
+          "AUTH_REFRESH_COOKIE_SAME_SITE=none requires AUTH_REFRESH_COOKIE_SECURE=true",
+      });
+    }
   });
 
-  return result as T;
-}
-
 /* =========================
-   HEALTH
+   PARSE INPUT
 ========================= */
 
-export async function checkDatabaseHealth(): Promise<{
-  ok: boolean;
-  code: string;
-}> {
-  try {
-    await db`select 1`;
+const rawEnvInput = {
+  DATABASE_URL: process.env.DATABASE_URL,
+  NODE_ENV: process.env.NODE_ENV,
 
-    return {
-      ok: true,
-      code: "DATABASE_OK",
-    };
-  } catch {
-    return {
-      ok: false,
-      code: "DATABASE_UNAVAILABLE",
-    };
+  AUTH_COOKIE_NAME: process.env.AUTH_COOKIE_NAME,
+  AUTH_COOKIE_DOMAIN: process.env.AUTH_COOKIE_DOMAIN,
+  AUTH_COOKIE_SECURE: process.env.AUTH_COOKIE_SECURE,
+  AUTH_COOKIE_SAME_SITE: process.env.AUTH_COOKIE_SAME_SITE,
+
+  AUTH_REFRESH_COOKIE_NAME: process.env.AUTH_REFRESH_COOKIE_NAME,
+  AUTH_REFRESH_COOKIE_DOMAIN: process.env.AUTH_REFRESH_COOKIE_DOMAIN,
+  AUTH_REFRESH_COOKIE_SECURE: process.env.AUTH_REFRESH_COOKIE_SECURE,
+  AUTH_REFRESH_COOKIE_SAME_SITE: process.env.AUTH_REFRESH_COOKIE_SAME_SITE,
+
+  AUTH_SESSION_MAX_AGE_SECONDS: process.env.AUTH_SESSION_MAX_AGE_SECONDS,
+  AUTH_REFRESH_MAX_AGE_SECONDS: process.env.AUTH_REFRESH_MAX_AGE_SECONDS,
+
+  AUTH_BCRYPT_ROUNDS: process.env.AUTH_BCRYPT_ROUNDS,
+};
+
+const parsedResult = rawEnvSchema.safeParse(rawEnvInput);
+
+if (!parsedResult.success) {
+  console.error("ENV_VALIDATION_ERROR", parsedResult.error.flatten());
+  throw parsedResult.error;
+}
+
+const parsedEnv = parsedResult.data;
+
+/* =========================
+   SECURE FLAG RESOLUTION
+========================= */
+
+function resolveSecureFlag(
+  explicitValue: boolean,
+  nodeEnv: z.infer<typeof nodeEnvSchema>
+): boolean {
+  if (nodeEnv === "production") {
+    return true;
   }
+
+  return explicitValue;
 }
 
-export async function getDatabaseRuntimeFingerprint(): Promise<{
-  ok: boolean;
-  database?: string;
-  current_user?: string;
-  server_addr?: string | null;
-  server_port?: number | null;
-  application_name?: string | null;
-  error?: string;
-}> {
-  try {
-    const rows = await db<{
-      database: string;
-      current_user: string;
-      server_addr: string | null;
-      server_port: number | null;
-      application_name: string | null;
-    }[]>`
-      select
-        current_database() as database,
-        current_user as current_user,
-        inet_server_addr()::text as server_addr,
-        inet_server_port() as server_port,
-        current_setting('application_name', true) as application_name
-    `;
+const AUTH_COOKIE_SECURE = resolveSecureFlag(
+  parsedEnv.AUTH_COOKIE_SECURE,
+  parsedEnv.NODE_ENV
+);
 
-    const row = rows[0];
+const AUTH_REFRESH_COOKIE_SECURE = resolveSecureFlag(
+  parsedEnv.AUTH_REFRESH_COOKIE_SECURE,
+  parsedEnv.NODE_ENV
+);
 
-    return {
-      ok: true,
-      database: row?.database ?? undefined,
-      current_user: row?.current_user ?? undefined,
-      server_addr: row?.server_addr ?? null,
-      server_port: row?.server_port ?? null,
-      application_name: row?.application_name ?? null,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Unknown database runtime fingerprint error",
-    };
+/* =========================
+   CORE ENV EXPORT
+========================= */
+
+export const env = {
+  ...parsedEnv,
+
+  AUTH_COOKIE_DOMAIN: parsedEnv.AUTH_COOKIE_DOMAIN,
+  AUTH_REFRESH_COOKIE_DOMAIN: parsedEnv.AUTH_REFRESH_COOKIE_DOMAIN,
+
+  AUTH_COOKIE_SECURE,
+  AUTH_REFRESH_COOKIE_SECURE,
+
+  isProduction: parsedEnv.NODE_ENV === "production",
+  isDevelopment: parsedEnv.NODE_ENV === "development",
+  isTest: parsedEnv.NODE_ENV === "test",
+} as const;
+
+/* =========================
+   SUPABASE ENV (LAZY)
+========================= */
+
+const supabaseEnvSchema = z.object({
+  SUPABASE_URL: z.string().min(1, "SUPABASE_URL is required"),
+  SUPABASE_SERVICE_ROLE_KEY: z
+    .string()
+    .min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
+});
+
+export type SupabaseEnv = z.infer<typeof supabaseEnvSchema>;
+
+export function getSupabaseEnv(): SupabaseEnv {
+  const result = supabaseEnvSchema.safeParse({
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
+
+  if (!result.success) {
+    console.error("SUPABASE_ENV_VALIDATION_ERROR", result.error.flatten());
+    throw result.error;
   }
-}
 
-export async function closePool(): Promise<void> {
-  await pool.end();
-}
-
-export async function closeSqlClient(): Promise<void> {
-  await sqlClient.end({ timeout: 5 });
-}
-
-export async function closeDatabaseConnections(): Promise<void> {
-  await Promise.allSettled([closePool(), closeSqlClient()]);
-}
-
-export type { PoolClient, PostgresType };
+  return result.data;
+} 
