@@ -54,13 +54,8 @@ const booleanFromString = (fieldName: string) =>
   z.string().transform((value, ctx) => {
     const normalized = value.trim().toLowerCase();
 
-    if (normalized === "true") {
-      return true;
-    }
-
-    if (normalized === "false") {
-      return false;
-    }
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
 
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -100,27 +95,26 @@ const rawEnvSchema = z
     DATABASE_URL: databaseUrlSchema,
     NODE_ENV: nodeEnvSchema.default("development"),
 
-    /**
-     * SESSION COOKIE
-     */
     AUTH_COOKIE_NAME: z.string().min(1).default("proceit_session"),
     AUTH_COOKIE_DOMAIN: optionalNormalizedString,
-    AUTH_COOKIE_SECURE: booleanFromString("AUTH_COOKIE_SECURE").default("true"),
+
+    AUTH_COOKIE_SECURE: z
+      .string()
+      .default("true")
+      .transform((v) => v === "true"),
+
     AUTH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
 
-    /**
-     * REFRESH COOKIE
-     */
     AUTH_REFRESH_COOKIE_NAME: z.string().min(1).default("proceit_refresh"),
     AUTH_REFRESH_COOKIE_DOMAIN: optionalNormalizedString,
-    AUTH_REFRESH_COOKIE_SECURE: booleanFromString(
-      "AUTH_REFRESH_COOKIE_SECURE"
-    ).default("true"),
+
+    AUTH_REFRESH_COOKIE_SECURE: z
+      .string()
+      .default("true")
+      .transform((v) => v === "true"),
+
     AUTH_REFRESH_COOKIE_SAME_SITE: cookieSameSiteSchema.default("lax"),
 
-    /**
-     * TTLs
-     */
     AUTH_SESSION_MAX_AGE_SECONDS: positiveIntegerFromString(
       "AUTH_SESSION_MAX_AGE_SECONDS"
     ).default(String(60 * 60 * 24 * 30)),
@@ -129,37 +123,10 @@ const rawEnvSchema = z
       "AUTH_REFRESH_MAX_AGE_SECONDS"
     ).default(String(60 * 60 * 24 * 7)),
 
-    /**
-     * Segurança / hashing
-     */
     AUTH_BCRYPT_ROUNDS: rangedPositiveIntegerFromString(
       "AUTH_BCRYPT_ROUNDS",
       { min: 8, max: 15 }
     ).default("10"),
-  })
-  .superRefine((data, ctx) => {
-    if (
-      data.AUTH_COOKIE_SAME_SITE === "none" &&
-      data.AUTH_COOKIE_SECURE !== true
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["AUTH_COOKIE_SAME_SITE"],
-        message: "AUTH_COOKIE_SAME_SITE=none requires AUTH_COOKIE_SECURE=true",
-      });
-    }
-
-    if (
-      data.AUTH_REFRESH_COOKIE_SAME_SITE === "none" &&
-      data.AUTH_REFRESH_COOKIE_SECURE !== true
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["AUTH_REFRESH_COOKIE_SAME_SITE"],
-        message:
-          "AUTH_REFRESH_COOKIE_SAME_SITE=none requires AUTH_REFRESH_COOKIE_SECURE=true",
-      });
-    }
   });
 
 /* =========================
@@ -178,10 +145,13 @@ const rawEnvInput = {
   AUTH_REFRESH_COOKIE_NAME: process.env.AUTH_REFRESH_COOKIE_NAME,
   AUTH_REFRESH_COOKIE_DOMAIN: process.env.AUTH_REFRESH_COOKIE_DOMAIN,
   AUTH_REFRESH_COOKIE_SECURE: process.env.AUTH_REFRESH_COOKIE_SECURE,
-  AUTH_REFRESH_COOKIE_SAME_SITE: process.env.AUTH_REFRESH_COOKIE_SAME_SITE,
+  AUTH_REFRESH_COOKIE_SAME_SITE:
+    process.env.AUTH_REFRESH_COOKIE_SAME_SITE,
 
-  AUTH_SESSION_MAX_AGE_SECONDS: process.env.AUTH_SESSION_MAX_AGE_SECONDS,
-  AUTH_REFRESH_MAX_AGE_SECONDS: process.env.AUTH_REFRESH_MAX_AGE_SECONDS,
+  AUTH_SESSION_MAX_AGE_SECONDS:
+    process.env.AUTH_SESSION_MAX_AGE_SECONDS,
+  AUTH_REFRESH_MAX_AGE_SECONDS:
+    process.env.AUTH_REFRESH_MAX_AGE_SECONDS,
 
   AUTH_BCRYPT_ROUNDS: process.env.AUTH_BCRYPT_ROUNDS,
 };
@@ -196,71 +166,12 @@ if (!parsedResult.success) {
 const parsedEnv = parsedResult.data;
 
 /* =========================
-   SECURE FLAG RESOLUTION
-========================= */
-
-function resolveSecureFlag(
-  explicitValue: boolean,
-  nodeEnv: z.infer<typeof nodeEnvSchema>
-): boolean {
-  if (nodeEnv === "production") {
-    return true;
-  }
-
-  return explicitValue;
-}
-
-const AUTH_COOKIE_SECURE = resolveSecureFlag(
-  parsedEnv.AUTH_COOKIE_SECURE,
-  parsedEnv.NODE_ENV
-);
-
-const AUTH_REFRESH_COOKIE_SECURE = resolveSecureFlag(
-  parsedEnv.AUTH_REFRESH_COOKIE_SECURE,
-  parsedEnv.NODE_ENV
-);
-
-/* =========================
-   CORE ENV EXPORT
+   EXPORT
 ========================= */
 
 export const env = {
   ...parsedEnv,
-
-  AUTH_COOKIE_DOMAIN: parsedEnv.AUTH_COOKIE_DOMAIN,
-  AUTH_REFRESH_COOKIE_DOMAIN: parsedEnv.AUTH_REFRESH_COOKIE_DOMAIN,
-
-  AUTH_COOKIE_SECURE,
-  AUTH_REFRESH_COOKIE_SECURE,
-
   isProduction: parsedEnv.NODE_ENV === "production",
   isDevelopment: parsedEnv.NODE_ENV === "development",
   isTest: parsedEnv.NODE_ENV === "test",
 } as const;
-
-/* =========================
-   SUPABASE ENV (LAZY)
-========================= */
-
-const supabaseEnvSchema = z.object({
-  SUPABASE_URL: z.string().min(1, "SUPABASE_URL is required"),
-  SUPABASE_SERVICE_ROLE_KEY: z
-    .string()
-    .min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
-});
-
-export type SupabaseEnv = z.infer<typeof supabaseEnvSchema>;
-
-export function getSupabaseEnv(): SupabaseEnv {
-  const result = supabaseEnvSchema.safeParse({
-    SUPABASE_URL: process.env.SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-  });
-
-  if (!result.success) {
-    console.error("SUPABASE_ENV_VALIDATION_ERROR", result.error.flatten());
-    throw result.error;
-  }
-
-  return result.data;
-} 
