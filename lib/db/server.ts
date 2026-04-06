@@ -118,12 +118,53 @@ function createSqlClient(): DbSqlClient {
     max: DB_POOL_MAX_CONNECTIONS,
     idle_timeout: Math.floor(DB_IDLE_TIMEOUT_MILLISECONDS / 1000),
     connect_timeout: Math.floor(DB_CONNECTION_TIMEOUT_MILLISECONDS / 1000),
-    prepare: true,
+
+    /**
+     * Importante para compatibilidade com Supabase + pooler.
+     *
+     * Prepared statements podem gerar comportamento inconsistente
+     * em chamadas de função, casts e reuso de conexão em ambiente
+     * gerenciado / transaction pooler.
+     */
+    prepare: false,
+
     transform: {
       undefined: null,
     },
+
     connection: {
       application_name: DB_APPLICATION_NAME,
+    },
+
+    onnotice(notice) {
+      console.warn("DB_POSTGRES_NOTICE", {
+        severity: notice.severity,
+        code: notice.code,
+        message: notice.message,
+        detail: notice.detail,
+        hint: notice.hint,
+      });
+    },
+
+    debug(connection, query, parameters) {
+      if (!env.isProduction) {
+        console.debug("DB_POSTGRES_DEBUG", {
+          connection:
+            typeof connection === "object" && connection !== null
+              ? {
+                  pid:
+                    "pid" in connection &&
+                    typeof connection.pid === "number"
+                      ? connection.pid
+                      : null,
+                }
+              : null,
+          query,
+          parameters_count: Array.isArray(parameters)
+            ? parameters.length
+            : 0,
+        });
+      }
     },
   }) as DbSqlClient;
 }
@@ -173,6 +214,52 @@ export async function checkDatabaseHealth(): Promise<{
     return {
       ok: false,
       code: "DATABASE_UNAVAILABLE",
+    };
+  }
+}
+
+export async function getDatabaseRuntimeFingerprint(): Promise<{
+  ok: boolean;
+  database?: string;
+  current_user?: string;
+  server_addr?: string | null;
+  server_port?: number | null;
+  application_name?: string | null;
+  error?: string;
+}> {
+  try {
+    const rows = await db<{
+      database: string;
+      current_user: string;
+      server_addr: string | null;
+      server_port: number | null;
+      application_name: string | null;
+    }[]>`
+      select
+        current_database() as database,
+        current_user as current_user,
+        inet_server_addr()::text as server_addr,
+        inet_server_port() as server_port,
+        current_setting('application_name', true) as application_name
+    `;
+
+    const row = rows[0];
+
+    return {
+      ok: true,
+      database: row?.database ?? undefined,
+      current_user: row?.current_user ?? undefined,
+      server_addr: row?.server_addr ?? null,
+      server_port: row?.server_port ?? null,
+      application_name: row?.application_name ?? null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Unknown database runtime fingerprint error",
     };
   }
 }
