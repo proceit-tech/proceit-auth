@@ -431,10 +431,26 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       return createEmptyRuntimeContext();
     }
 
-    const authContext = await getSessionContext(sessionIdentifier);
+    let authContext;
+
+    try {
+      authContext = await getSessionContext(sessionIdentifier);
+    } catch {
+      return createAuthenticatedRuntimeContext({
+        sessionId: sessionIdentifier,
+        user: null as any,
+        requiresTenantSelection: true,
+        hasMasterAccess: false,
+      });
+    }
 
     if (!authContext.ok || !authContext.session || !authContext.user) {
-      return createEmptyRuntimeContext();
+      return createAuthenticatedRuntimeContext({
+        sessionId: sessionIdentifier,
+        user: null as any,
+        requiresTenantSelection: true,
+        hasMasterAccess: false,
+      });
     }
 
     if (!isUuidLike(authContext.session.id) || !isUuidLike(authContext.user.id)) {

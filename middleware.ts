@@ -5,7 +5,6 @@ const AUTH_COOKIE_NAME =
 
 const ROOT_ROUTE = "/";
 const LOGIN_ROUTE = "/login";
-const DEFAULT_AUTHENTICATED_ROUTE = "/app";
 
 const PUBLIC_ROUTES = new Set<string>([
   ROOT_ROUTE,
@@ -64,9 +63,6 @@ function buildLoginRedirect(req: NextRequest): NextResponse {
   const loginUrl = new URL(LOGIN_ROUTE, req.url);
   const returnTo = buildReturnToValue(req);
 
-  /**
-   * Evita poluir a URL com retorno redundante para rotas públicas.
-   */
   if (returnTo !== LOGIN_ROUTE && returnTo !== ROOT_ROUTE) {
     loginUrl.searchParams.set("return_to", returnTo);
   }
@@ -74,62 +70,41 @@ function buildLoginRedirect(req: NextRequest): NextResponse {
   return NextResponse.redirect(loginUrl);
 }
 
-function buildAuthenticatedRedirect(req: NextRequest): NextResponse {
-  const redirectUrl = new URL(DEFAULT_AUTHENTICATED_ROUTE, req.url);
-
-  return NextResponse.redirect(redirectUrl);
-}
-
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   /**
    * Bypass explícito:
-   * - rotas de API
-   * - assets estáticos
-   *
-   * O runtime de autenticação profundo acontece no servidor
-   * e nas rotas protegidas; aqui o middleware atua apenas
-   * como barreira leve de navegação.
+   * - API
+   * - assets
    */
   if (isApiRoute(pathname) || isStaticAsset(pathname)) {
     return NextResponse.next();
   }
 
   const hasSessionCookie = hasUsableSessionCookie(req);
-  const publicRoute = isPublicRoute(pathname);
   const privateRoute = isPrivateRoute(pathname);
 
   /**
-   * Rotas privadas exigem presença do cookie de sessão.
+   * Regra única do middleware:
    *
-   * Observação:
-   * - neste estágio o middleware valida apenas presença,
-   *   não integridade criptográfica nem contexto;
-   * - validação completa ocorre nas rotas/server runtime
-   *   via session_token + get_session_context.
+   * - NÃO decide autenticação real
+   * - NÃO decide tenant
+   * - NÃO redireciona baseado apenas em cookie
+   *
+   * Apenas impede acesso a rotas privadas SEM cookie
    */
   if (privateRoute && !hasSessionCookie) {
     return buildLoginRedirect(req);
   }
 
   /**
-   * Se o usuário já possui cookie de sessão e tentar acessar
-   * uma rota pública de entrada, redirecionamos ao hub protegido.
+   * Todas as outras decisões:
+   * - sessão válida
+   * - tenant ativo
+   * - contexto SQL
    *
-   * O refinamento posterior entre /app e /select-tenant
-   * continua sendo responsabilidade do runtime protegido.
-   */
-  if (publicRoute && hasSessionCookie) {
-    return buildAuthenticatedRedirect(req);
-  }
-
-  /**
-   * Rotas neutras/desconhecidas:
-   * - mantém passagem normal;
-   * - a proteção real continua no runtime/server;
-   * - isso evita que o middleware invente regras excessivas
-   *   para caminhos ainda não catalogados.
+   * são responsabilidade do runtime server-side
    */
   return NextResponse.next();
 }

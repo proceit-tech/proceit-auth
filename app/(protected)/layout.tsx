@@ -12,10 +12,22 @@ type Props = {
 };
 
 function buildLoginRedirect(): never {
-  redirect("/login?return_to=%2Fapp");
+  /**
+   * Regra oficial:
+   * - login é o ponto de entrada para sessão inexistente/expirada/inválida;
+   * - evitar hardcode agressivo de return_to quando a própria camada de auth
+   *   já consegue reconstruir navegação posterior;
+   * - reduz acoplamento entre layout protegido e rota pública de entrada.
+   */
+  redirect("/login");
 }
 
 function buildTenantSelectionRedirect(): never {
+  /**
+   * Regra oficial:
+   * - sessão válida sem escopo operacional final deve ir para seleção de tenant;
+   * - esta rota permanece dentro do domínio protegido do runtime.
+   */
   redirect("/select-tenant");
 }
 
@@ -24,15 +36,43 @@ export default async function ProtectedLayout({ children }: Props) {
   const ctx = await getRuntimeContext();
 
   /**
-   * Regra de proteção principal:
-   * - sem autenticação válida, volta ao login
-   * - com sessão válida porém sem escopo operacional resolvido,
-   *   força seleção de tenant
+   * Regra oficial da camada protegida:
+   *
+   * 1) sem identidade autenticada real -> login
+   * 2) com identidade autenticada, porém sem tenant ativo/escopo operacional -> select-tenant
+   * 3) com identidade autenticada + tenant ativo + escopo operacional -> render normal
+   *
+   * Observação importante:
+   * - esta camada NÃO deve inventar uma terceira interpretação paralela da auth;
+   * - o critério aqui precisa continuar coerente com o runtime oficial;
+   * - o middleware deve atuar apenas como barreira leve, nunca como autoridade final.
+   */
+
+  /**
+   * Etapa 1 — autenticação real.
+   *
+   * `authenticated` continua sendo a sinalização de que:
+   * - a sessão foi resolvida pelo runtime;
+   * - a identidade pôde ser carregada;
+   * - o contexto mínimo protegido existe.
+   *
+   * Se isso falhar, o destino correto é login.
    */
   if (!ctx.authenticated) {
     buildLoginRedirect();
   }
 
+  /**
+   * Etapa 2 — escopo operacional obrigatório.
+   *
+   * Mesmo com autenticação válida, a operação protegida do hub exige tenant
+   * realmente resolvido. Portanto, qualquer um dos sinais abaixo obriga
+   * seleção de tenant:
+   *
+   * - runtime explicitamente pede seleção;
+   * - não há tenant scope aplicado;
+   * - não há tenant ativo disponível.
+   */
   if (
     ctx.requiresTenantSelection ||
     !ctx.hasTenantScope ||
