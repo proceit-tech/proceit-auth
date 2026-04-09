@@ -194,13 +194,29 @@ function createAuthenticatedRuntimeContext(params: {
   platformRoles?: string[];
   requiresTenantSelection?: boolean;
   hasMasterAccess?: boolean;
+  activeTenant?: RuntimeTenant | null;
+  membership?: RuntimeMembership | null;
+  tenantRoles?: string[];
+  permissions?: string[];
+  modules?: string[];
+  navigationFlat?: RuntimeNavigationItem[];
+  navigation?: NavigationTreeItem[];
+  hasTenantScope?: boolean;
 }): RuntimeContext {
   return createEmptyRuntimeContext({
     authenticated: true,
     sessionId: params.sessionId,
     user: params.user,
+    activeTenant: params.activeTenant ?? null,
+    membership: params.membership ?? null,
     platformRoles: uniqueSorted(params.platformRoles ?? []),
+    tenantRoles: uniqueSorted(params.tenantRoles ?? []),
+    permissions: uniqueSorted(params.permissions ?? []),
+    modules: uniqueSorted(params.modules ?? []),
+    navigationFlat: params.navigationFlat ?? [],
+    navigation: params.navigation ?? [],
     requiresTenantSelection: params.requiresTenantSelection ?? false,
+    hasTenantScope: params.hasTenantScope ?? false,
     hasMasterAccess: params.hasMasterAccess ?? false,
   });
 }
@@ -236,7 +252,15 @@ function hasConsistentTenantScope(params: {
     return false;
   }
 
+  if (!isUuidLike(user.id)) {
+    return false;
+  }
+
   if (!isUuidLike(activeTenant.id) || !isUuidLike(membership.id)) {
+    return false;
+  }
+
+  if (!isUuidLike(membership.userId) || !isUuidLike(membership.tenantId)) {
     return false;
   }
 
@@ -434,33 +458,22 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
 
     try {
       authContext = await getSessionContext(sessionIdentifier);
-
-      console.log("[RUNTIME] authContext:", JSON.stringify(authContext, null, 2));
-
+      console.log(
+        "[RUNTIME] authContext:",
+        JSON.stringify(authContext, null, 2)
+      );
     } catch (error) {
       console.error("[RUNTIME] getSessionContext ERROR:", error);
-
-      return createAuthenticatedRuntimeContext({
-        sessionId: sessionIdentifier,
-        user: null as any,
-        requiresTenantSelection: true,
-        hasMasterAccess: false,
-      });
+      return createEmptyRuntimeContext();
     }
 
     if (!authContext.ok || !authContext.session || !authContext.user) {
       console.warn("[RUNTIME] invalid authContext shape");
-
-      return createAuthenticatedRuntimeContext({
-        sessionId: sessionIdentifier,
-        user: null as any,
-        requiresTenantSelection: true,
-        hasMasterAccess: false,
-      });
+      return createEmptyRuntimeContext();
     }
 
-    console.log("[RUNTIME] session.id:", authContext.session?.id);
-    console.log("[RUNTIME] user.id:", authContext.user?.id);
+    console.log("[RUNTIME] session.id:", authContext.session.id);
+    console.log("[RUNTIME] user.id:", authContext.user.id);
 
     if (!isUuidLike(authContext.session.id) || !isUuidLike(authContext.user.id)) {
       console.error("[RUNTIME] INVALID UUID", {
@@ -527,7 +540,6 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
         activeTenant,
         membership,
       });
-
     } catch (error) {
       console.error("[RUNTIME] tenant load ERROR:", error);
 
@@ -540,11 +552,12 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       });
     }
 
-    const hasTenantScope =
-      isUuidLike(activeTenant?.id) &&
-      isUuidLike(membership?.id) &&
-      membership?.status === "active";
-      
+    const hasTenantScope = hasConsistentTenantScope({
+      user: runtimeUser,
+      activeTenant,
+      membership,
+    });
+
     console.log("[RUNTIME] hasTenantScope:", hasTenantScope);
 
     const normalizedTenantRoles = hasTenantScope ? uniqueSorted(tenantRoles) : [];
@@ -555,8 +568,7 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       ? buildNavigationTree(normalizedNavigationFlat)
       : [];
 
-    return {
-      authenticated: true,
+    return createAuthenticatedRuntimeContext({
       sessionId: authContext.session.id,
       user: runtimeUser,
       activeTenant: hasTenantScope ? activeTenant : null,
@@ -570,8 +582,7 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       requiresTenantSelection: !hasTenantScope,
       hasTenantScope,
       hasMasterAccess,
-    };
-
+    });
   } catch (error) {
     console.error("[RUNTIME] FATAL ERROR:", error);
     return createEmptyRuntimeContext();
