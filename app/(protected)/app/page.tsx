@@ -26,6 +26,9 @@ import {
 import { withSqlAuthContext } from "@/lib/auth/server-context";
 import { getDisplayName } from "@/lib/auth/user";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type Lang = "es" | "pt";
 
 type RuntimeRow = {
