@@ -372,6 +372,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
 
   const ok = pickBoolean(root.ok) ?? false;
   const context = pickRecord(root.context);
+  const rootSession = pickRecord(root.session);
   const contextSession = pickRecord(context?.session);
   const contextUser = pickRecord(context?.user);
 
@@ -382,18 +383,21 @@ function normalizeLoginResult(raw: unknown): LoginResult {
     pickOptionalString(root.message, root.detail) ??
     "No fue posible autenticar la sesión.";
 
-  const contextRecord = context as unknown as UnknownRecord;
-  const sessionRecord = toRecord(contextRecord.session);
-
   const resolvedSessionId = pickOptionalString(
-    contextRecord.session_id,
-    sessionRecord?.id,
-    sessionRecord?.session_id
+    root.session_id,
+    root.sessionId,
+    rootSession?.id,
+    rootSession?.session_id,
+    contextSession?.id,
+    contextSession?.session_id,
+    context?.session_id
   );
 
   const resolvedSessionToken = pickOptionalString(
     root.session_token,
     root.sessionToken,
+    rootSession?.session_token,
+    rootSession?.token,
     contextSession?.session_token,
     contextSession?.token,
     context?.session_token
@@ -402,6 +406,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
   const resolvedRefreshToken = pickOptionalString(
     root.refresh_token,
     root.refreshToken,
+    rootSession?.refresh_token,
     contextSession?.refresh_token,
     context?.refresh_token
   );
@@ -409,6 +414,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
   const resolvedExpiresAt = pickOptionalString(
     root.expires_at,
     root.expiresAt,
+    rootSession?.expires_at,
     contextSession?.expires_at,
     context?.expires_at
   );
@@ -416,6 +422,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
   const resolvedRefreshExpiresAt = pickOptionalString(
     root.refresh_expires_at,
     root.refreshExpiresAt,
+    rootSession?.refresh_expires_at,
     contextSession?.refresh_expires_at,
     context?.refresh_expires_at
   );
@@ -423,6 +430,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
   const resolvedActiveTenantId = pickOptionalString(
     root.active_tenant_id,
     root.activeTenantId,
+    rootSession?.active_tenant_id,
     contextSession?.active_tenant_id,
     context?.active_tenant_id
   );
@@ -430,6 +438,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
   const resolvedMembershipId = pickOptionalString(
     root.membership_id,
     root.membershipId,
+    rootSession?.membership_id,
     contextSession?.membership_id,
     context?.membership_id
   );
@@ -437,6 +446,7 @@ function normalizeLoginResult(raw: unknown): LoginResult {
   const resolvedRoleCode = pickOptionalString(
     root.role_code,
     root.roleCode,
+    rootSession?.role_code,
     contextSession?.role_code,
     context?.role_code
   );
@@ -681,13 +691,33 @@ async function runSingleResultFunction<TRaw, TNormalized>(params: {
   try {
     const rows = (await params.queryFactory()) as SqlFunctionResultRow<TRaw>[];
 
+    console.error("AUTH_DB_RAW_RESULT", {
+      label: params.errorLabel,
+      rows_length: Array.isArray(rows) ? rows.length : null,
+      first_row: Array.isArray(rows) ? rows[0] ?? null : null,
+      first_row_result:
+        Array.isArray(rows) && rows.length > 0 ? rows[0]?.result ?? null : null,
+      typeof_first_row_result:
+        Array.isArray(rows) && rows.length > 0
+          ? typeof rows[0]?.result
+          : null,
+    });
+
     if (!Array.isArray(rows) || rows.length === 0) {
       return params.emptyFallback;
     }
 
     const rawResult = rows[0]?.result ?? null;
 
-    return params.normalize(rawResult);
+    const normalizedResult = params.normalize(rawResult);
+
+    console.error("AUTH_DB_NORMALIZED_RESULT", {
+      label: params.errorLabel,
+      raw_result: rawResult,
+      normalized_result: normalizedResult,
+    });
+
+    return normalizedResult;
   } catch (error) {
     console.error(params.errorLabel, error);
 
