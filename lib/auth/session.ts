@@ -549,6 +549,14 @@ function normalizeAuthContext(raw: unknown): AuthContext {
     ...record,
   };
 
+  const resolvedCode = pickOptionalString(
+    mergedRoot.code,
+    record.code,
+    context?.code,
+    data?.code,
+    payload?.code
+  );
+
   const resolvedOk =
     pickBoolean(
       mergedRoot.ok,
@@ -556,19 +564,17 @@ function normalizeAuthContext(raw: unknown): AuthContext {
       context?.ok,
       data?.ok,
       payload?.ok
-    ) ?? false;
+    ) ??
+    (
+      resolvedCode === "SESSION_OK" ||
+      resolvedCode === "AUTHENTICATED"
+    );
 
   if (!resolvedOk) {
     return {
       ok: false,
       code:
-        pickOptionalString(
-          mergedRoot.code,
-          record.code,
-          context?.code,
-          data?.code,
-          payload?.code
-        ) ?? "SESSION_CONTEXT_INVALID",
+        resolvedCode ?? "SESSION_CONTEXT_INVALID",
       message:
         pickOptionalString(
           mergedRoot.message,
@@ -599,7 +605,11 @@ function normalizeAuthContext(raw: unknown): AuthContext {
     payload?.user
   );
 
-  if (!resolvedSession || !resolvedUser) {
+  if (!resolvedSession) {
+    return SESSION_CONTEXT_FAILED;
+  }
+
+  if (!resolvedUser) {
     return SESSION_CONTEXT_FAILED;
   }
 
