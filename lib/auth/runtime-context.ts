@@ -421,13 +421,12 @@ async function getNavigation(
 
 export async function getRuntimeContext(): Promise<RuntimeContext> {
   try {
-    /**
-     * O cookie oficial agora transporta session_token opaco,
-     * não necessariamente um UUID de sessão.
-     */
     const sessionIdentifier = await getSessionCookie();
 
+    console.log("[RUNTIME] cookie sessionIdentifier:", sessionIdentifier);
+
     if (!sessionIdentifier || !normalizeString(sessionIdentifier)) {
+      console.log("[RUNTIME] no session cookie");
       return createEmptyRuntimeContext();
     }
 
@@ -435,7 +434,12 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
 
     try {
       authContext = await getSessionContext(sessionIdentifier);
-    } catch {
+
+      console.log("[RUNTIME] authContext:", JSON.stringify(authContext, null, 2));
+
+    } catch (error) {
+      console.error("[RUNTIME] getSessionContext ERROR:", error);
+
       return createAuthenticatedRuntimeContext({
         sessionId: sessionIdentifier,
         user: null as any,
@@ -445,6 +449,8 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
     }
 
     if (!authContext.ok || !authContext.session || !authContext.user) {
+      console.warn("[RUNTIME] invalid authContext shape");
+
       return createAuthenticatedRuntimeContext({
         sessionId: sessionIdentifier,
         user: null as any,
@@ -453,7 +459,15 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       });
     }
 
+    console.log("[RUNTIME] session.id:", authContext.session?.id);
+    console.log("[RUNTIME] user.id:", authContext.user?.id);
+
     if (!isUuidLike(authContext.session.id) || !isUuidLike(authContext.user.id)) {
+      console.error("[RUNTIME] INVALID UUID", {
+        sessionId: authContext.session.id,
+        userId: authContext.user.id,
+      });
+
       return createEmptyRuntimeContext();
     }
 
@@ -471,7 +485,11 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
     const hasMasterAccess = platformRoles.includes(PLATFORM_MASTER_ROLE);
     const activeTenantId = authContext.session.active_tenant_id ?? null;
 
+    console.log("[RUNTIME] activeTenantId:", activeTenantId);
+
     if (!activeTenantId || !isUuidLike(activeTenantId)) {
+      console.warn("[RUNTIME] missing tenant → forcing selection");
+
       return createAuthenticatedRuntimeContext({
         sessionId: authContext.session.id,
         user: runtimeUser,
@@ -504,7 +522,15 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
         getModules(activeTenantId),
         getNavigation(runtimeUser.id, activeTenantId),
       ]);
-    } catch {
+
+      console.log("[RUNTIME] tenant scope loaded:", {
+        activeTenant,
+        membership,
+      });
+
+    } catch (error) {
+      console.error("[RUNTIME] tenant load ERROR:", error);
+
       return createAuthenticatedRuntimeContext({
         sessionId: authContext.session.id,
         user: runtimeUser,
@@ -520,10 +546,10 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       membership,
     });
 
+    console.log("[RUNTIME] hasTenantScope:", hasTenantScope);
+
     const normalizedTenantRoles = hasTenantScope ? uniqueSorted(tenantRoles) : [];
-    const normalizedPermissions = hasTenantScope
-      ? uniqueSorted(permissions)
-      : [];
+    const normalizedPermissions = hasTenantScope ? uniqueSorted(permissions) : [];
     const normalizedModules = hasTenantScope ? uniqueSorted(modules) : [];
     const normalizedNavigationFlat = hasTenantScope ? navigationFlat : [];
     const navigation = hasTenantScope
@@ -546,7 +572,9 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       hasTenantScope,
       hasMasterAccess,
     };
-  } catch {
+
+  } catch (error) {
+    console.error("[RUNTIME] FATAL ERROR:", error);
     return createEmptyRuntimeContext();
   }
 }
