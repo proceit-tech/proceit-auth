@@ -99,10 +99,11 @@ function buildSslConfigForPg(): PoolConfig["ssl"] {
 }
 
 function buildSslConfigForPostgres():
-  | "require"
   | boolean
   | postgres.Options<Record<string, PostgresType>>["ssl"] {
-  return "require";
+  return {
+    rejectUnauthorized: false,
+  };
 }
 
 function extractDebugConnectionPid(connection: unknown): number | null {
