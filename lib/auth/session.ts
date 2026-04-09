@@ -527,25 +527,84 @@ function normalizeAuthContext(raw: unknown): AuthContext {
     return SESSION_CONTEXT_EMPTY;
   }
 
-  const ok = pickBoolean(record.ok) ?? false;
+  const context = pickRecord(record.context);
+  const data = pickRecord(record.data);
+  const payload = pickRecord(record.payload);
 
-  if (!ok) {
+  const mergedRoot: UnknownRecord = {
+    ...(payload ?? {}),
+    ...(data ?? {}),
+    ...(context ?? {}),
+    ...record,
+  };
+
+  const resolvedOk =
+    pickBoolean(
+      mergedRoot.ok,
+      record.ok,
+      context?.ok,
+      data?.ok,
+      payload?.ok
+    ) ?? false;
+
+  if (!resolvedOk) {
     return {
       ok: false,
-      code: pickOptionalString(record.code) ?? "SESSION_CONTEXT_INVALID",
+      code:
+        pickOptionalString(
+          mergedRoot.code,
+          record.code,
+          context?.code,
+          data?.code,
+          payload?.code
+        ) ?? "SESSION_CONTEXT_INVALID",
       message:
-        pickOptionalString(record.message, record.detail) ??
-        "No fue posible obtener el contexto de la sesión.",
+        pickOptionalString(
+          mergedRoot.message,
+          mergedRoot.detail,
+          record.message,
+          record.detail,
+          context?.message,
+          context?.detail,
+          data?.message,
+          data?.detail,
+          payload?.message,
+          payload?.detail
+        ) ?? "No fue posible obtener el contexto de la sesión.",
     };
   }
 
-  if (!record.session || !record.user) {
+  const resolvedSession = pickRecord(
+    record.session,
+    context?.session,
+    data?.session,
+    payload?.session
+  );
+
+  const resolvedUser = pickRecord(
+    record.user,
+    context?.user,
+    data?.user,
+    payload?.user
+  );
+
+  if (!resolvedSession || !resolvedUser) {
     return SESSION_CONTEXT_FAILED;
   }
 
   return {
-    ...(record as unknown as AuthContext),
+    ...(mergedRoot as unknown as AuthContext),
     ok: true,
+    session: resolvedSession as AuthContext["session"],
+    user: resolvedUser as AuthContext["user"],
+    memberships:
+      (pickArray(
+        record.memberships,
+        context?.memberships,
+        data?.memberships,
+        payload?.memberships
+      ) as AuthContext["memberships"]) ??
+      ((mergedRoot as unknown as AuthContext).memberships ?? []),
   } as AuthContext;
 }
 
@@ -657,6 +716,32 @@ async function runSingleResultFunction<TRaw, TNormalized>(params: {
   }
 }
 
+async function resolveStructuralSessionIdFromIdentifier(
+  sessionIdentifier: string
+): Promise<string> {
+  const resolvedIdentifier = resolveSessionIdentifier(sessionIdentifier);
+
+  if (isUuidLike(resolvedIdentifier)) {
+    return resolvedIdentifier;
+  }
+
+  const context = await getSessionContext(resolvedIdentifier);
+
+  if (!context.ok) {
+    throw new Error(
+      pickOptionalString(context.code) ?? "AUTH_SESSION_CONTEXT_NOT_RESOLVED"
+    );
+  }
+
+  const resolvedSessionId = pickOptionalString(
+    (context as unknown as UnknownRecord).session_id,
+    context.session?.id,
+    context.session?.session_id
+  );
+
+  return resolveSessionId(resolvedSessionId);
+}
+
 /* =========================
    AUTH CORE FUNCTIONS
 ========================= */
@@ -728,7 +813,9 @@ export async function selectTenantForSession(params: {
   sessionIdentifier: string;
   tenantId: string;
 }): Promise<AuthContext> {
-  const sessionId = resolveSessionId(params.sessionIdentifier);
+  const sessionId = await resolveStructuralSessionIdFromIdentifier(
+    params.sessionIdentifier
+  );
   const tenantId = resolveTenantId(params.tenantId);
 
   return runSingleResultFunction<AuthContext, AuthContext>({
@@ -751,7 +838,9 @@ export async function revokeSession(params: {
   sessionIdentifier: string;
   reason?: string;
 }): Promise<RevokeSessionResult> {
-  const sessionId = resolveSessionId(params.sessionIdentifier);
+  const sessionId = await resolveStructuralSessionIdFromIdentifier(
+    params.sessionIdentifier
+  );
   const reason = resolveReason(params.reason, "session_revoked");
 
   return runSingleResultFunction<RevokeSessionResult, RevokeSessionResult>({
@@ -774,7 +863,9 @@ export async function logoutSession(params: {
   sessionIdentifier: string;
   reason?: string;
 }): Promise<RevokeSessionResult> {
-  const sessionId = resolveSessionId(params.sessionIdentifier);
+  const sessionId = await resolveStructuralSessionIdFromIdentifier(
+    params.sessionIdentifier
+  );
   const reason = resolveReason(params.reason, "user_logout");
 
   return runSingleResultFunction<RevokeSessionResult, RevokeSessionResult>({
@@ -797,7 +888,9 @@ export async function refreshSessionWithToken(params: {
   sessionIdentifier: string;
   refreshToken: string;
 }): Promise<RefreshSessionResult> {
-  const sessionId = resolveSessionId(params.sessionIdentifier);
+  const sessionId = await resolveStructuralSessionIdFromIdentifier(
+    params.sessionIdentifier
+  );
   const refreshToken = resolveRefreshToken(params.refreshToken);
 
   return runSingleResultFunction<RefreshSessionResult, RefreshSessionResult>({
