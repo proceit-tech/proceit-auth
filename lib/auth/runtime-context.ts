@@ -120,8 +120,96 @@ type NavigationRow = {
 ========================= */
 
 const PLATFORM_MASTER_ROLE = "master";
-
 const ACTIVE_MEMBERSHIP_STATUSES = new Set(["active", "enabled", "approved"]);
+const RUNTIME_SCOPE = "AUTH_RUNTIME_CONTEXT";
+
+/* =========================
+   DEBUG HELPERS
+========================= */
+
+type DebugPayload = Record<string, unknown>;
+
+function buildDebugBase() {
+  return {
+    ts: new Date().toISOString(),
+    scope: RUNTIME_SCOPE,
+  };
+}
+
+function runtimeLog(step: string, payload?: DebugPayload) {
+  console.log(
+    JSON.stringify({
+      ...buildDebugBase(),
+      level: "info",
+      step,
+      ...(payload ?? {}),
+    })
+  );
+}
+
+function runtimeWarn(step: string, payload?: DebugPayload) {
+  console.warn(
+    JSON.stringify({
+      ...buildDebugBase(),
+      level: "warn",
+      step,
+      ...(payload ?? {}),
+    })
+  );
+}
+
+function runtimeError(
+  step: string,
+  error: unknown,
+  payload?: DebugPayload
+) {
+  console.error(
+    JSON.stringify({
+      ...buildDebugBase(),
+      level: "error",
+      step,
+      error:
+        error instanceof Error
+          ? {
+              name: error.name,
+              message: error.message,
+              stack: error.stack,
+            }
+          : {
+              value: String(error),
+            },
+      ...(payload ?? {}),
+    })
+  );
+}
+
+function summarizeArray(values: unknown[] | null | undefined, max = 10) {
+  if (!Array.isArray(values)) {
+    return {
+      count: 0,
+      items: [],
+    };
+  }
+
+  return {
+    count: values.length,
+    items: values.slice(0, max),
+  };
+}
+
+function maskIdentifier(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim();
+
+  if (normalized.length <= 12) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 8)}...${normalized.slice(-4)}`;
+}
 
 /* =========================
    GENERIC HELPERS
@@ -160,16 +248,28 @@ function isActiveMembershipStatus(status: string | null | undefined): boolean {
   const normalizedStatus = normalizeString(status);
 
   if (!normalizedStatus) {
+    runtimeWarn("isActiveMembershipStatus.empty", {
+      status,
+    });
     return false;
   }
 
-  return ACTIVE_MEMBERSHIP_STATUSES.has(normalizedStatus.toLowerCase());
+  const result = ACTIVE_MEMBERSHIP_STATUSES.has(normalizedStatus.toLowerCase());
+
+  runtimeLog("isActiveMembershipStatus.evaluated", {
+    original_status: status,
+    normalized_status: normalizedStatus.toLowerCase(),
+    accepted_statuses: Array.from(ACTIVE_MEMBERSHIP_STATUSES),
+    result,
+  });
+
+  return result;
 }
 
 function createEmptyRuntimeContext(
   overrides?: Partial<RuntimeContext>
 ): RuntimeContext {
-  return {
+  const context = {
     authenticated: false,
     sessionId: null,
     user: null,
@@ -186,6 +286,19 @@ function createEmptyRuntimeContext(
     hasMasterAccess: false,
     ...overrides,
   };
+
+  runtimeLog("createEmptyRuntimeContext.created", {
+    authenticated: context.authenticated,
+    sessionId: context.sessionId,
+    userId: context.user?.id ?? null,
+    activeTenantId: context.activeTenant?.id ?? null,
+    membershipId: context.membership?.id ?? null,
+    requiresTenantSelection: context.requiresTenantSelection,
+    hasTenantScope: context.hasTenantScope,
+    hasMasterAccess: context.hasMasterAccess,
+  });
+
+  return context;
 }
 
 function createAuthenticatedRuntimeContext(params: {
@@ -203,7 +316,7 @@ function createAuthenticatedRuntimeContext(params: {
   navigation?: NavigationTreeItem[];
   hasTenantScope?: boolean;
 }): RuntimeContext {
-  return createEmptyRuntimeContext({
+  const context = createEmptyRuntimeContext({
     authenticated: true,
     sessionId: params.sessionId,
     user: params.user,
@@ -219,6 +332,25 @@ function createAuthenticatedRuntimeContext(params: {
     hasTenantScope: params.hasTenantScope ?? false,
     hasMasterAccess: params.hasMasterAccess ?? false,
   });
+
+  runtimeLog("createAuthenticatedRuntimeContext.created", {
+    sessionId: context.sessionId,
+    userId: context.user?.id ?? null,
+    activeTenantId: context.activeTenant?.id ?? null,
+    membershipId: context.membership?.id ?? null,
+    membershipStatus: context.membership?.status ?? null,
+    platformRoles: context.platformRoles,
+    tenantRoles: context.tenantRoles,
+    permissions_count: context.permissions.length,
+    modules_count: context.modules.length,
+    navigationFlat_count: context.navigationFlat.length,
+    navigation_count: context.navigation.length,
+    requiresTenantSelection: context.requiresTenantSelection,
+    hasTenantScope: context.hasTenantScope,
+    hasMasterAccess: context.hasMasterAccess,
+  });
+
+  return context;
 }
 
 function toRuntimeUser(input: {
@@ -230,7 +362,7 @@ function toRuntimeUser(input: {
   email: string | null;
   document_number: string | null;
 }): RuntimeUser {
-  return {
+  const user = {
     id: input.id,
     displayName: input.display_name,
     fullName: input.full_name,
@@ -239,6 +371,18 @@ function toRuntimeUser(input: {
     email: input.email,
     documentNumber: input.document_number,
   };
+
+  runtimeLog("toRuntimeUser.mapped", {
+    userId: user.id,
+    displayName: user.displayName,
+    fullName: user.fullName,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    email: user.email,
+    documentNumber: user.documentNumber,
+  });
+
+  return user;
 }
 
 function hasConsistentTenantScope(params: {
@@ -248,33 +392,80 @@ function hasConsistentTenantScope(params: {
 }): boolean {
   const { user, activeTenant, membership } = params;
 
+  runtimeLog("hasConsistentTenantScope.start", {
+    userId: user?.id ?? null,
+    activeTenantId: activeTenant?.id ?? null,
+    membershipId: membership?.id ?? null,
+    membershipUserId: membership?.userId ?? null,
+    membershipTenantId: membership?.tenantId ?? null,
+    membershipStatus: membership?.status ?? null,
+  });
+
   if (!activeTenant || !membership) {
+    runtimeWarn("hasConsistentTenantScope.missing_required_entities", {
+      hasActiveTenant: Boolean(activeTenant),
+      hasMembership: Boolean(membership),
+    });
     return false;
   }
 
   if (!isUuidLike(user.id)) {
+    runtimeWarn("hasConsistentTenantScope.invalid_user_uuid", {
+      userId: user.id,
+    });
     return false;
   }
 
   if (!isUuidLike(activeTenant.id) || !isUuidLike(membership.id)) {
+    runtimeWarn("hasConsistentTenantScope.invalid_tenant_or_membership_uuid", {
+      activeTenantId: activeTenant.id,
+      membershipId: membership.id,
+      activeTenantIsUuid: isUuidLike(activeTenant.id),
+      membershipIsUuid: isUuidLike(membership.id),
+    });
     return false;
   }
 
   if (!isUuidLike(membership.userId) || !isUuidLike(membership.tenantId)) {
+    runtimeWarn("hasConsistentTenantScope.invalid_membership_scope_uuid", {
+      membershipUserId: membership.userId,
+      membershipTenantId: membership.tenantId,
+      membershipUserIdIsUuid: isUuidLike(membership.userId),
+      membershipTenantIdIsUuid: isUuidLike(membership.tenantId),
+    });
     return false;
   }
 
   if (membership.userId !== user.id) {
+    runtimeWarn("hasConsistentTenantScope.user_mismatch", {
+      userId: user.id,
+      membershipUserId: membership.userId,
+    });
     return false;
   }
 
   if (membership.tenantId !== activeTenant.id) {
+    runtimeWarn("hasConsistentTenantScope.tenant_mismatch", {
+      activeTenantId: activeTenant.id,
+      membershipTenantId: membership.tenantId,
+    });
     return false;
   }
 
   if (!isActiveMembershipStatus(membership.status)) {
+    runtimeWarn("hasConsistentTenantScope.invalid_membership_status", {
+      membershipStatus: membership.status,
+      acceptedStatuses: Array.from(ACTIVE_MEMBERSHIP_STATUSES),
+    });
     return false;
   }
+
+  runtimeLog("hasConsistentTenantScope.success", {
+    userId: user.id,
+    activeTenantId: activeTenant.id,
+    membershipId: membership.id,
+    membershipStatus: membership.status,
+  });
 
   return true;
 }
@@ -284,6 +475,10 @@ function hasConsistentTenantScope(params: {
 ========================= */
 
 async function getTenantById(tenantId: string): Promise<RuntimeTenant | null> {
+  runtimeLog("getTenantById.start", {
+    tenantId,
+  });
+
   const result = await query<TenantRow>(
     `
       select id, name, code
@@ -294,23 +489,44 @@ async function getTenantById(tenantId: string): Promise<RuntimeTenant | null> {
     [tenantId]
   );
 
+  runtimeLog("getTenantById.query_result", {
+    tenantId,
+    rowCount: result.rows.length,
+    firstRow: result.rows[0] ?? null,
+  });
+
   const row = result.rows[0] as TenantRow | undefined;
 
   if (!row) {
+    runtimeWarn("getTenantById.not_found", {
+      tenantId,
+    });
     return null;
   }
 
-  return {
+  const mapped = {
     id: row.id,
     name: row.name,
     code: row.code,
   };
+
+  runtimeLog("getTenantById.success", {
+    tenantId,
+    mapped,
+  });
+
+  return mapped;
 }
 
 async function getActiveMembership(
   userId: string,
   tenantId: string
 ): Promise<RuntimeMembership | null> {
+  runtimeLog("getActiveMembership.start", {
+    userId,
+    tenantId,
+  });
+
   const result = await query<ActiveMembershipRow>(
     `
       select
@@ -328,13 +544,24 @@ async function getActiveMembership(
     [userId, tenantId]
   );
 
+  runtimeLog("getActiveMembership.query_result", {
+    userId,
+    tenantId,
+    rowCount: result.rows.length,
+    firstRow: result.rows[0] ?? null,
+  });
+
   const row = result.rows[0] as ActiveMembershipRow | undefined;
 
   if (!row) {
+    runtimeWarn("getActiveMembership.not_found", {
+      userId,
+      tenantId,
+    });
     return null;
   }
 
-  return {
+  const mapped = {
     id: row.membership_id,
     tenantId: row.tenant_id,
     userId: row.user_id,
@@ -342,9 +569,25 @@ async function getActiveMembership(
     status: row.status,
     isDefault: row.is_default,
   };
+
+  runtimeLog("getActiveMembership.success", {
+    userId,
+    tenantId,
+    membershipId: mapped.id,
+    membershipStatus: mapped.status,
+    roleCode: mapped.roleCode,
+    isDefault: mapped.isDefault,
+    mapped,
+  });
+
+  return mapped;
 }
 
 async function getPlatformRoles(userId: string): Promise<string[]> {
+  runtimeLog("getPlatformRoles.start", {
+    userId,
+  });
+
   const result = await query<PlatformRoleRow>(
     `
       select distinct r.code as role_code
@@ -358,13 +601,28 @@ async function getPlatformRoles(userId: string): Promise<string[]> {
     [userId]
   );
 
-  return uniqueSorted(result.rows.map((row: PlatformRoleRow) => row.role_code));
+  const normalized = uniqueSorted(
+    result.rows.map((row: PlatformRoleRow) => row.role_code)
+  );
+
+  runtimeLog("getPlatformRoles.success", {
+    userId,
+    rowCount: result.rows.length,
+    roles: normalized,
+  });
+
+  return normalized;
 }
 
 async function getTenantRoles(
   userId: string,
   tenantId: string
 ): Promise<string[]> {
+  runtimeLog("getTenantRoles.start", {
+    userId,
+    tenantId,
+  });
+
   const result = await query<TenantRoleRow>(
     `
       select distinct role_code
@@ -375,13 +633,29 @@ async function getTenantRoles(
     [userId, tenantId]
   );
 
-  return uniqueSorted(result.rows.map((row: TenantRoleRow) => row.role_code));
+  const normalized = uniqueSorted(
+    result.rows.map((row: TenantRoleRow) => row.role_code)
+  );
+
+  runtimeLog("getTenantRoles.success", {
+    userId,
+    tenantId,
+    rowCount: result.rows.length,
+    roles: normalized,
+  });
+
+  return normalized;
 }
 
 async function getPermissions(
   userId: string,
   tenantId: string
 ): Promise<string[]> {
+  runtimeLog("getPermissions.start", {
+    userId,
+    tenantId,
+  });
+
   const result = await query<PermissionRow>(
     `
       select permission_code
@@ -390,9 +664,19 @@ async function getPermissions(
     [userId, tenantId]
   );
 
-  return uniqueSorted(
+  const normalized = uniqueSorted(
     result.rows.map((row: PermissionRow) => row.permission_code)
   );
+
+  runtimeLog("getPermissions.success", {
+    userId,
+    tenantId,
+    rowCount: result.rows.length,
+    permissions_count: normalized.length,
+    permissions_preview: normalized.slice(0, 20),
+  });
+
+  return normalized;
 }
 
 /**
@@ -402,6 +686,10 @@ async function getPermissions(
  * este método deve ser substituído por uma função baseada em membership.
  */
 async function getModules(tenantId: string): Promise<string[]> {
+  runtimeLog("getModules.start", {
+    tenantId,
+  });
+
   const result = await query<ModuleRow>(
     `
       select module_code
@@ -410,13 +698,29 @@ async function getModules(tenantId: string): Promise<string[]> {
     [tenantId]
   );
 
-  return uniqueSorted(result.rows.map((row: ModuleRow) => row.module_code));
+  const normalized = uniqueSorted(
+    result.rows.map((row: ModuleRow) => row.module_code)
+  );
+
+  runtimeLog("getModules.success", {
+    tenantId,
+    rowCount: result.rows.length,
+    modules_count: normalized.length,
+    modules: normalized,
+  });
+
+  return normalized;
 }
 
 async function getNavigation(
   userId: string,
   tenantId: string
 ): Promise<RuntimeNavigationItem[]> {
+  runtimeLog("getNavigation.start", {
+    userId,
+    tenantId,
+  });
+
   const result = await query<NavigationRow>(
     `
       select *
@@ -425,7 +729,7 @@ async function getNavigation(
     [userId, tenantId]
   );
 
-  return result.rows.map((row: NavigationRow) => ({
+  const mapped = result.rows.map((row: NavigationRow) => ({
     code: row.code,
     parentCode: row.parent_code,
     moduleCode: row.module_code,
@@ -437,6 +741,16 @@ async function getNavigation(
     sortOrder: row.sort_order,
     metadata: row.metadata,
   }));
+
+  runtimeLog("getNavigation.success", {
+    userId,
+    tenantId,
+    rowCount: result.rows.length,
+    navigation_count: mapped.length,
+    navigation_preview: mapped.slice(0, 20),
+  });
+
+  return mapped;
 }
 
 /* =========================
@@ -444,41 +758,81 @@ async function getNavigation(
 ========================= */
 
 export async function getRuntimeContext(): Promise<RuntimeContext> {
+  runtimeLog("getRuntimeContext.start", {
+    nodeEnv: process.env.NODE_ENV ?? null,
+  });
+
   try {
     const sessionIdentifier = await getSessionCookie();
 
-    console.log("[RUNTIME] cookie sessionIdentifier:", sessionIdentifier);
+    runtimeLog("getRuntimeContext.cookie_read", {
+      sessionIdentifier_present: Boolean(sessionIdentifier),
+      sessionIdentifier_masked: maskIdentifier(sessionIdentifier),
+      sessionIdentifier_length: sessionIdentifier?.length ?? 0,
+    });
 
     if (!sessionIdentifier || !normalizeString(sessionIdentifier)) {
-      console.log("[RUNTIME] no session cookie");
+      runtimeWarn("getRuntimeContext.no_session_cookie", {
+        sessionIdentifier,
+      });
+
       return createEmptyRuntimeContext();
     }
 
     let authContext;
 
     try {
+      runtimeLog("getRuntimeContext.session_context_resolve_start", {
+        sessionIdentifier_masked: maskIdentifier(sessionIdentifier),
+      });
+
       authContext = await getSessionContext(sessionIdentifier);
-      console.log(
-        "[RUNTIME] authContext:",
-        JSON.stringify(authContext, null, 2)
-      );
+
+      runtimeLog("getRuntimeContext.session_context_resolve_success", {
+        authContext_ok: authContext?.ok ?? null,
+        authContext_code: authContext?.code ?? null,
+        sessionId: authContext?.session?.id ?? null,
+        activeTenantId: authContext?.session?.active_tenant_id ?? null,
+        userId: authContext?.user?.id ?? null,
+        memberships_count: Array.isArray(authContext?.memberships)
+          ? authContext.memberships.length
+          : 0,
+        authContext_snapshot: authContext,
+      });
     } catch (error) {
-      console.error("[RUNTIME] getSessionContext ERROR:", error);
+      runtimeError("getRuntimeContext.session_context_resolve_error", error, {
+        sessionIdentifier_masked: maskIdentifier(sessionIdentifier),
+      });
+
       return createEmptyRuntimeContext();
     }
 
     if (!authContext.ok || !authContext.session || !authContext.user) {
-      console.warn("[RUNTIME] invalid authContext shape");
+      runtimeWarn("getRuntimeContext.invalid_auth_context_shape", {
+        authContext_ok: authContext?.ok ?? null,
+        authContext_code: authContext?.code ?? null,
+        hasSession: Boolean(authContext?.session),
+        hasUser: Boolean(authContext?.user),
+        authContext_snapshot: authContext,
+      });
+
       return createEmptyRuntimeContext();
     }
 
-    console.log("[RUNTIME] session.id:", authContext.session.id);
-    console.log("[RUNTIME] user.id:", authContext.user.id);
+    runtimeLog("getRuntimeContext.auth_context_validated", {
+      sessionId: authContext.session.id,
+      activeTenantId: authContext.session.active_tenant_id ?? null,
+      userId: authContext.user.id,
+      userEmail: authContext.user.email ?? null,
+      userDisplayName: authContext.user.display_name ?? null,
+    });
 
     if (!isUuidLike(authContext.session.id) || !isUuidLike(authContext.user.id)) {
-      console.error("[RUNTIME] INVALID UUID", {
+      runtimeWarn("getRuntimeContext.invalid_uuid_contract", {
         sessionId: authContext.session.id,
         userId: authContext.user.id,
+        sessionIdIsUuid: isUuidLike(authContext.session.id),
+        userIdIsUuid: isUuidLike(authContext.user.id),
       });
 
       return createEmptyRuntimeContext();
@@ -498,10 +852,21 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
     const hasMasterAccess = platformRoles.includes(PLATFORM_MASTER_ROLE);
     const activeTenantId = authContext.session.active_tenant_id ?? null;
 
-    console.log("[RUNTIME] activeTenantId:", activeTenantId);
+    runtimeLog("getRuntimeContext.identity_layer_ready", {
+      sessionId: authContext.session.id,
+      userId: runtimeUser.id,
+      activeTenantId,
+      platformRoles,
+      hasMasterAccess,
+    });
 
     if (!activeTenantId || !isUuidLike(activeTenantId)) {
-      console.warn("[RUNTIME] missing tenant → forcing selection");
+      runtimeWarn("getRuntimeContext.missing_or_invalid_active_tenant", {
+        sessionId: authContext.session.id,
+        userId: runtimeUser.id,
+        activeTenantId,
+        activeTenantIdIsUuid: isUuidLike(activeTenantId),
+      });
 
       return createAuthenticatedRuntimeContext({
         sessionId: authContext.session.id,
@@ -520,6 +885,12 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
     let navigationFlat: RuntimeNavigationItem[] = [];
 
     try {
+      runtimeLog("getRuntimeContext.tenant_scope_loading_start", {
+        sessionId: authContext.session.id,
+        userId: runtimeUser.id,
+        activeTenantId,
+      });
+
       [
         activeTenant,
         membership,
@@ -536,12 +907,25 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
         getNavigation(runtimeUser.id, activeTenantId),
       ]);
 
-      console.log("[RUNTIME] tenant scope loaded:", {
+      runtimeLog("getRuntimeContext.tenant_scope_loading_success", {
+        sessionId: authContext.session.id,
+        userId: runtimeUser.id,
+        activeTenantId,
         activeTenant,
         membership,
+        tenantRoles,
+        permissions_count: permissions.length,
+        permissions_preview: permissions.slice(0, 20),
+        modules,
+        navigationFlat_count: navigationFlat.length,
+        navigationFlat_preview: navigationFlat.slice(0, 20),
       });
     } catch (error) {
-      console.error("[RUNTIME] tenant load ERROR:", error);
+      runtimeError("getRuntimeContext.tenant_scope_loading_error", error, {
+        sessionId: authContext.session.id,
+        userId: runtimeUser.id,
+        activeTenantId,
+      });
 
       return createAuthenticatedRuntimeContext({
         sessionId: authContext.session.id,
@@ -558,7 +942,16 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       membership,
     });
 
-    console.log("[RUNTIME] hasTenantScope:", hasTenantScope);
+    runtimeLog("getRuntimeContext.tenant_scope_evaluated", {
+      sessionId: authContext.session.id,
+      userId: runtimeUser.id,
+      activeTenantId: activeTenant?.id ?? null,
+      membershipId: membership?.id ?? null,
+      membershipStatus: membership?.status ?? null,
+      membershipUserId: membership?.userId ?? null,
+      membershipTenantId: membership?.tenantId ?? null,
+      hasTenantScope,
+    });
 
     const normalizedTenantRoles = hasTenantScope ? uniqueSorted(tenantRoles) : [];
     const normalizedPermissions = hasTenantScope ? uniqueSorted(permissions) : [];
@@ -568,7 +961,17 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       ? buildNavigationTree(normalizedNavigationFlat)
       : [];
 
-    return createAuthenticatedRuntimeContext({
+    runtimeLog("getRuntimeContext.navigation_built", {
+      hasTenantScope,
+      tenantRoles: normalizedTenantRoles,
+      permissions_count: normalizedPermissions.length,
+      modules_count: normalizedModules.length,
+      navigationFlat_count: normalizedNavigationFlat.length,
+      navigation_count: navigation.length,
+      navigation_tree_preview: summarizeArray(navigation as unknown[]),
+    });
+
+    const finalContext = createAuthenticatedRuntimeContext({
       sessionId: authContext.session.id,
       user: runtimeUser,
       activeTenant: hasTenantScope ? activeTenant : null,
@@ -583,8 +986,27 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       hasTenantScope,
       hasMasterAccess,
     });
+
+    runtimeLog("getRuntimeContext.final_context_ready", {
+      authenticated: finalContext.authenticated,
+      sessionId: finalContext.sessionId,
+      userId: finalContext.user?.id ?? null,
+      activeTenantId: finalContext.activeTenant?.id ?? null,
+      membershipId: finalContext.membership?.id ?? null,
+      membershipStatus: finalContext.membership?.status ?? null,
+      requiresTenantSelection: finalContext.requiresTenantSelection,
+      hasTenantScope: finalContext.hasTenantScope,
+      hasMasterAccess: finalContext.hasMasterAccess,
+      platformRoles: finalContext.platformRoles,
+      tenantRoles: finalContext.tenantRoles,
+      permissions_count: finalContext.permissions.length,
+      modules_count: finalContext.modules.length,
+      navigation_count: finalContext.navigation.length,
+    });
+
+    return finalContext;
   } catch (error) {
-    console.error("[RUNTIME] FATAL ERROR:", error);
+    runtimeError("getRuntimeContext.fatal_error", error);
     return createEmptyRuntimeContext();
   }
 }
