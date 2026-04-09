@@ -540,12 +540,11 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       });
     }
 
-    const hasTenantScope = hasConsistentTenantScope({
-      user: runtimeUser,
-      activeTenant,
-      membership,
-    });
-
+    const hasTenantScope =
+      isUuidLike(activeTenant?.id) &&
+      isUuidLike(membership?.id) &&
+      membership?.status === "active";
+      
     console.log("[RUNTIME] hasTenantScope:", hasTenantScope);
 
     const normalizedTenantRoles = hasTenantScope ? uniqueSorted(tenantRoles) : [];
