@@ -382,12 +382,13 @@ function normalizeLoginResult(raw: unknown): LoginResult {
     pickOptionalString(root.message, root.detail) ??
     "No fue posible autenticar la sesión.";
 
+  const contextRecord = context as unknown as UnknownRecord;
+  const sessionRecord = toRecord(contextRecord.session);
+
   const resolvedSessionId = pickOptionalString(
-    root.session_id,
-    root.sessionId,
-    contextSession?.id,
-    contextSession?.session_id,
-    context?.session_id
+    contextRecord.session_id,
+    sessionRecord?.id,
+    sessionRecord?.session_id
   );
 
   const resolvedSessionToken = pickOptionalString(
@@ -733,10 +734,13 @@ async function resolveStructuralSessionIdFromIdentifier(
     );
   }
 
+  const contextRecord = context as unknown as UnknownRecord;
+  const sessionRecord = toRecord(contextRecord.session);
+
   const resolvedSessionId = pickOptionalString(
-    (context as unknown as UnknownRecord).session_id,
-    context.session?.id,
-    context.session?.session_id
+    contextRecord.session_id,
+    sessionRecord?.id,
+    sessionRecord?.session_id
   );
 
   return resolveSessionId(resolvedSessionId);
