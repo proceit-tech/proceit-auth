@@ -5,6 +5,9 @@ import { getRuntimeContext } from "@/lib/auth/runtime-context";
 import ProtectedSidebar from "@/components/shell/protected-sidebar";
 import ProtectedTopbar from "@/components/shell/protected-topbar";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type Lang = "es" | "pt";
 
 type Props = {
