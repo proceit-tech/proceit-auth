@@ -1,6 +1,8 @@
+
+
 import "server-only";
 
-import { query } from "@/lib/db/server";
+import { db } from "@/lib/db/server";
 import { getSessionCookie } from "@/lib/auth/cookies";
 import { getSessionContext } from "@/lib/auth/session";
 import {
@@ -269,7 +271,7 @@ function isActiveMembershipStatus(status: string | null | undefined): boolean {
 function createEmptyRuntimeContext(
   overrides?: Partial<RuntimeContext>
 ): RuntimeContext {
-  const context = {
+  const context: RuntimeContext = {
     authenticated: false,
     sessionId: null,
     user: null,
@@ -362,7 +364,7 @@ function toRuntimeUser(input: {
   email: string | null;
   document_number: string | null;
 }): RuntimeUser {
-  const user = {
+  const user: RuntimeUser = {
     id: input.id,
     displayName: input.display_name,
     fullName: input.full_name,
@@ -479,23 +481,20 @@ async function getTenantById(tenantId: string): Promise<RuntimeTenant | null> {
     tenantId,
   });
 
-  const result = await query<TenantRow>(
-    `
-      select id, name, code
-      from core_identity.tenants
-      where id = $1::uuid
-      limit 1
-    `,
-    [tenantId]
-  );
+  const rows = await db<TenantRow[]>`
+    select id, name, code
+    from core_identity.tenants
+    where id = ${tenantId}::uuid
+    limit 1
+  `;
 
   runtimeLog("getTenantById.query_result", {
     tenantId,
-    rowCount: result.rows.length,
-    firstRow: result.rows[0] ?? null,
+    rowCount: rows.length,
+    firstRow: rows[0] ?? null,
   });
 
-  const row = result.rows[0] as TenantRow | undefined;
+  const row = rows[0] as TenantRow | undefined;
 
   if (!row) {
     runtimeWarn("getTenantById.not_found", {
@@ -504,7 +503,7 @@ async function getTenantById(tenantId: string): Promise<RuntimeTenant | null> {
     return null;
   }
 
-  const mapped = {
+  const mapped: RuntimeTenant = {
     id: row.id,
     name: row.name,
     code: row.code,
@@ -527,31 +526,31 @@ async function getActiveMembership(
     tenantId,
   });
 
-  const result = await query<ActiveMembershipRow>(
-    `
-      select
-        m.membership_id,
-        m.user_id,
-        m.tenant_id,
-        m.role_code,
-        m.status,
-        coalesce(tm.is_default, false) as is_default
-      from core_identity.get_active_membership($1::uuid, $2::uuid) m
-      join core_identity.tenant_memberships tm
-        on tm.id = m.membership_id
-      limit 1
-    `,
-    [userId, tenantId]
-  );
+  const rows = await db<ActiveMembershipRow[]>`
+    select
+      m.membership_id,
+      m.user_id,
+      m.tenant_id,
+      m.role_code,
+      m.status,
+      coalesce(tm.is_default, false) as is_default
+    from core_identity.get_active_membership(
+      ${userId}::uuid,
+      ${tenantId}::uuid
+    ) m
+    join core_identity.tenant_memberships tm
+      on tm.id = m.membership_id
+    limit 1
+  `;
 
   runtimeLog("getActiveMembership.query_result", {
     userId,
     tenantId,
-    rowCount: result.rows.length,
-    firstRow: result.rows[0] ?? null,
+    rowCount: rows.length,
+    firstRow: rows[0] ?? null,
   });
 
-  const row = result.rows[0] as ActiveMembershipRow | undefined;
+  const row = rows[0] as ActiveMembershipRow | undefined;
 
   if (!row) {
     runtimeWarn("getActiveMembership.not_found", {
@@ -561,7 +560,7 @@ async function getActiveMembership(
     return null;
   }
 
-  const mapped = {
+  const mapped: RuntimeMembership = {
     id: row.membership_id,
     tenantId: row.tenant_id,
     userId: row.user_id,
@@ -588,26 +587,23 @@ async function getPlatformRoles(userId: string): Promise<string[]> {
     userId,
   });
 
-  const result = await query<PlatformRoleRow>(
-    `
-      select distinct r.code as role_code
-      from core_rbac.user_platform_roles upr
-      join core_rbac.roles r on r.id = upr.role_id
-      where upr.user_id = $1::uuid
-        and upr.is_active = true
-        and r.is_active = true
-      order by r.code asc
-    `,
-    [userId]
-  );
+  const rows = await db<PlatformRoleRow[]>`
+    select distinct r.code as role_code
+    from core_rbac.user_platform_roles upr
+    join core_rbac.roles r on r.id = upr.role_id
+    where upr.user_id = ${userId}::uuid
+      and upr.is_active = true
+      and r.is_active = true
+    order by r.code asc
+  `;
 
   const normalized = uniqueSorted(
-    result.rows.map((row: PlatformRoleRow) => row.role_code)
+    rows.map((row: PlatformRoleRow) => row.role_code)
   );
 
   runtimeLog("getPlatformRoles.success", {
     userId,
-    rowCount: result.rows.length,
+    rowCount: rows.length,
     roles: normalized,
   });
 
@@ -623,24 +619,21 @@ async function getTenantRoles(
     tenantId,
   });
 
-  const result = await query<TenantRoleRow>(
-    `
-      select distinct role_code
-      from core_rbac.v_membership_permissions
-      where user_id = $1::uuid
-        and tenant_id = $2::uuid
-    `,
-    [userId, tenantId]
-  );
+  const rows = await db<TenantRoleRow[]>`
+    select distinct role_code
+    from core_rbac.v_membership_permissions
+    where user_id = ${userId}::uuid
+      and tenant_id = ${tenantId}::uuid
+  `;
 
   const normalized = uniqueSorted(
-    result.rows.map((row: TenantRoleRow) => row.role_code)
+    rows.map((row: TenantRoleRow) => row.role_code)
   );
 
   runtimeLog("getTenantRoles.success", {
     userId,
     tenantId,
-    rowCount: result.rows.length,
+    rowCount: rows.length,
     roles: normalized,
   });
 
@@ -656,22 +649,22 @@ async function getPermissions(
     tenantId,
   });
 
-  const result = await query<PermissionRow>(
-    `
-      select permission_code
-      from core_rbac.get_membership_permission_codes($1::uuid, $2::uuid)
-    `,
-    [userId, tenantId]
-  );
+  const rows = await db<PermissionRow[]>`
+    select permission_code
+    from core_rbac.get_membership_permission_codes(
+      ${userId}::uuid,
+      ${tenantId}::uuid
+    )
+  `;
 
   const normalized = uniqueSorted(
-    result.rows.map((row: PermissionRow) => row.permission_code)
+    rows.map((row: PermissionRow) => row.permission_code)
   );
 
   runtimeLog("getPermissions.success", {
     userId,
     tenantId,
-    rowCount: result.rows.length,
+    rowCount: rows.length,
     permissions_count: normalized.length,
     permissions_preview: normalized.slice(0, 20),
   });
@@ -690,21 +683,18 @@ async function getModules(tenantId: string): Promise<string[]> {
     tenantId,
   });
 
-  const result = await query<ModuleRow>(
-    `
-      select module_code
-      from core_catalog.get_tenant_module_codes($1::uuid)
-    `,
-    [tenantId]
-  );
+  const rows = await db<ModuleRow[]>`
+    select module_code
+    from core_catalog.get_tenant_module_codes(${tenantId}::uuid)
+  `;
 
   const normalized = uniqueSorted(
-    result.rows.map((row: ModuleRow) => row.module_code)
+    rows.map((row: ModuleRow) => row.module_code)
   );
 
   runtimeLog("getModules.success", {
     tenantId,
-    rowCount: result.rows.length,
+    rowCount: rows.length,
     modules_count: normalized.length,
     modules: normalized,
   });
@@ -721,15 +711,15 @@ async function getNavigation(
     tenantId,
   });
 
-  const result = await query<NavigationRow>(
-    `
-      select *
-      from core_navigation.get_navigation_for_membership($1::uuid, $2::uuid)
-    `,
-    [userId, tenantId]
-  );
+  const rows = await db<NavigationRow[]>`
+    select *
+    from core_navigation.get_navigation_for_membership(
+      ${userId}::uuid,
+      ${tenantId}::uuid
+    )
+  `;
 
-  const mapped = result.rows.map((row: NavigationRow) => ({
+  const mapped: RuntimeNavigationItem[] = rows.map((row: NavigationRow) => ({
     code: row.code,
     parentCode: row.parent_code,
     moduleCode: row.module_code,
@@ -745,7 +735,7 @@ async function getNavigation(
   runtimeLog("getNavigation.success", {
     userId,
     tenantId,
-    rowCount: result.rows.length,
+    rowCount: rows.length,
     navigation_count: mapped.length,
     navigation_preview: mapped.slice(0, 20),
   });
@@ -807,7 +797,7 @@ export async function getRuntimeContext(): Promise<RuntimeContext> {
       return createEmptyRuntimeContext();
     }
 
-    if (!authContext.ok || !authContext.session || !authContext.user) {
+    if (!authContext?.ok || !authContext.session || !authContext.user) {
       runtimeWarn("getRuntimeContext.invalid_auth_context_shape", {
         authContext_ok: authContext?.ok ?? null,
         authContext_code: authContext?.code ?? null,
